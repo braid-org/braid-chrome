@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Braid Chrome Extension",
-  "version": "0.0.35",
+  "version": "0.0.88",
   "permissions": [
     "activeTab",
     "tabs",
@@ -10,6 +10,7 @@
     "background",
     "webRequest"
   ],
+  "devtools_page": "devtools.html",
   "host_permissions": [
     "https://*/*",
     "http://*/*",
@@ -31,7 +32,8 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "dt_bg.wasm"
+        "dt_bg.wasm",
+        "inject.html"
       ],
       "matches": [
         "<all_urls>"
@@ -44,7 +46,7 @@
         "<all_urls>"
       ],
       "js": [
-        "./popup.js"
+        "./content_script.js"
       ]
     }
   ],

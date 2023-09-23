@@ -1,46 +1,66 @@
-console.log('%c Yo! yo yo', 'background: #faf')
+console.log('YOYOYO2', 'background: #f00')
 
 chrome.webRequest.onCompleted.addListener(
     details => {
         console.log('%c Request completeorcycle', 'background: #ff8')
+        if (!details.responseHeaders.find(x => x.name.toLowerCase() === 'accept-subscribe')) return;
+
+        console.log('got here..')
+
+        chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+            console.log('gonna try22.2..')
+
+            // Listen for any changes on the active tab
+            chrome.tabs.onUpdated.addListener(function callback(tabId, info, tab) {
+                // Check if tab update status is 'complete' and the updated tab is the current active tab
+                if (info.status === 'complete' && tabId === tabs[0].id) {
+                    chrome.tabs.sendMessage(tabs[0].id, { action: "replace_html" });
+                    // Remove the listener after you're done
+                    chrome.tabs.onUpdated.removeListener(callback);
+                }
+            });
+
+
+            // chrome.tabs.sendMessage(tabs[0].id, { action: "replace_html" });
+
+            // chrome.tabs.executeScript(tabs[0].id, { file: "popup.js" }, function () {
+
+            // setTimeout(() => {
+
+            //     console.log(`tabs[${tabs.length}]`, tabs)
+
+            //     chrome.tabs.sendMessage(tabs[0].id, { action: "replace_html" });
+            // }, 1000)
+
+            // });
+
+        })
     },
     { urls: ["<all_urls>"], types: ["main_frame"] },
     ["responseHeaders"]
 )
 
 chrome.webRequest.onResponseStarted.addListener(details => {
-    console.log('Yo! we see a request', 'background: #ff0')
-    console.log(JSON.stringify(details, null, 4))
-
-    if (!details.responseHeaders.find(x => x.name.toLowerCase() === 'subscribe')) {
-        return
-    }
-
-    var url = details.url
-    if (url[url.length - 1] === '/') {
-        url = url.slice(0, -1)
-    }
-
-    var theTab
-    chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
-        theTab = tabs[0]
-    })
-
+    console.log('Yo! we see a request', 'background: #0f0')
 }, { urls: ['<all_urls>'] }, ["extraHeaders", 'responseHeaders'])
 
-// chrome.webRequest.onBeforeSendHeaders.addListener(
-//     function (details) {
-//         console.log('onBeforeSendHeaders', 'background: #f0f')
-//         console.log(JSON.stringify(details, null, 4))
+let devToolsConnection;
 
-//         // for (var i = 0; i < details.requestHeaders.length; ++i) {
-//         //     if (details.requestHeaders[i].name === 'User-Agent') {
-//         //         details.requestHeaders.splice(i, 1);
-//         //         break;
-//         //     }
-//         // }
-//         return { requestHeaders: details.requestHeaders };
-//     },
-//     { urls: ['<all_urls>'] },
-//     ['blocking', 'requestHeaders']
-// );
+chrome.runtime.onConnect.addListener((port) => {
+    console.log(`onConnect: `, port)
+  if (port.name === "devtools-panel") {
+    devToolsConnection = port;
+    devToolsConnection.onDisconnect.addListener(() => {
+      devToolsConnection = null;
+    });
+  }
+});
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+
+    console.log(`got message: ${message}`)
+  if (devToolsConnection) {
+    console.log(`sending message: ${message}`)
+    devToolsConnection.postMessage(message);
+  }
+});

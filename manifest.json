@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "WASM Test Extension",
+  "version": "30.0",
+
+  "permissions": ["activeTab", "tabs", "storage", "scripting"],
+
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "16.png",
+      "48": "48.png",
+      "128": "128.png"
+    }
+  },
+
+  "icons": {
+    "16": "16.png",
+    "48": "48.png",
+    "128": "128.png"
+  },
+
+	"web_accessible_resources": [{
+    "resources": ["dt_bg.wasm"],
+    "matches": ["<all_urls>"]
+	}],  
+
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["./popup.js"]
+    }
+  ]
+}

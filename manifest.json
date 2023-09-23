@@ -3,7 +3,7 @@
   "name": "Braid Chrome Extension",
   "version": "0.0.30",
 
-  "permissions": ["activeTab", "tabs", "storage", "scripting"],
+  "permissions": ["activeTab", "tabs", "storage", "scripting", "background", "webRequest"],
 
   "action": {
     "default_popup": "popup.html",
@@ -30,5 +30,7 @@
       "matches": ["<all_urls>"],
       "js": ["./popup.js"]
     }
-  ]
+  ],
+
+  "background": { "service_worker": "background.js" }
 }

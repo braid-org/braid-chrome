@@ -1177,6 +1177,15 @@ async function __wbg_init(input) {
     return __wbg_finalize_init(instance, module);
 }
 
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
 
 chrome.runtime.onMessage.addListener(async function (request, sender, sendResponse) {
 
@@ -1208,6 +1217,28 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
 async function inject() {
     let port = 60402;
     let braid = load_braid_http();
+
+    let on_bytes_received = s => {
+        console.log(`on_bytes_received[${s.slice(0, 500)}]`)
+        chrome.runtime.sendMessage({ action: "braid_in", data: s });
+    }
+
+    let on_bytes_going_out = (params) => {
+        console.log(`on_bytes_going_out[${constructHTTPRequest(params)}]`)
+        chrome.runtime.sendMessage({ action: "braid_out", data: constructHTTPRequest(params) });
+    }
+
+    function constructHTTPRequest(params) {
+        let httpRequest = `${params.method} ${params.url} HTTP/1.1\r\n`;
+        for (var pair of params.headers.entries()) {
+            httpRequest += `${pair[0]}: ${pair[1]}\r\n`;
+        }
+        httpRequest += '\r\n';
+        if (['POST', 'PATCH', 'PUT'].includes(params.method?.toUpperCase()) && params.body) {
+            httpRequest += params.body;
+        }
+        return httpRequest;
+    }
 
     let response = await fetch(chrome.runtime.getURL('dt_bg.wasm'))
     let wasmModuleBuffer = await response.arrayBuffer();
@@ -1332,7 +1363,6 @@ async function inject() {
                     },
                 ],
             };
-            chrome.runtime.sendMessage({ action: "braid_out", data: ops });
             fetchWithRetry(window.location.href, ops);
         }
     });
@@ -1353,7 +1383,7 @@ async function inject() {
                     //     )}`
                     //   );
 
-                    chrome.runtime.sendMessage({ action: "braid_in", data: { version, parents, body, patches } });
+                    // chrome.runtime.sendMessage({ action: "braid_in", data: { version, parents, body, patches } });
 
                     if (textarea.hasAttribute("readonly")) {
                         textarea.removeAttribute("readonly");
@@ -1617,6 +1647,8 @@ async function inject() {
                     .join("\r\n");
             }
 
+            on_bytes_going_out(params);
+
             // Wrap the AbortController with a new one that we control.
             //
             // This is because we want to be able to abort the fetch that the user
@@ -1748,8 +1780,12 @@ async function inject() {
                         return;
                     }
 
+                    let s = decoder.decode(value)
+
+                    on_bytes_received(s)
+
                     // Tell the parser to process some more stream
-                    parser.read(decoder.decode(value));
+                    parser.read(s);
                 } catch (e) {
                     cb(null, e);
                     return;

@@ -16,12 +16,30 @@ function add_message(message) {
     // Handle message from content script here
     //   console.log("Received message in devtools:", message);
 
+    let d = document.createElement('pre')
+    d.textContent = message.data
+    d.style.background = `rgb(41,42,45)`
+    d.style.borderRadius = '3px'
+    d.style.margin = '3px'
+    d.style.padding = '3px'
+
     if (message.action == 'braid_out') {
-        id_left.textContent += message.data
+        id_left.append(d)
     } else if (message.action == 'braid_in') {
-        id_right.textContent += message.data
+        id_right.append(d)
     }
 }
+
+// POST undefined HTTP/1.1
+// parents: "[\"b4ef158b-2e58-4965-90d3-6ab3ac232fb0\",10]"
+// patches: 1
+// peer: hqeum4qsu7m
+// version: "[\"b4ef158b-2e58-4965-90d3-6ab3ac232fb0\",11]"
+
+// content-length: 1
+// content-range: json 523-523
+
+// a
 
 // Hello World3
 // Received message in devtools: "created!"

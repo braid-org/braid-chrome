@@ -1223,13 +1223,13 @@ async function inject() {
         chrome.runtime.sendMessage({ action: "braid_in", data: s });
     }
 
-    let on_bytes_going_out = (params) => {
-        console.log(`on_bytes_going_out[${constructHTTPRequest(params)}]`)
-        chrome.runtime.sendMessage({ action: "braid_out", data: constructHTTPRequest(params) });
+    let on_bytes_going_out = (params, url) => {
+        console.log(`on_bytes_going_out[${constructHTTPRequest(params, url)}]`)
+        chrome.runtime.sendMessage({ action: "braid_out", data: constructHTTPRequest(params, url) });
     }
 
-    function constructHTTPRequest(params) {
-        let httpRequest = `${params.method} ${params.url} HTTP/1.1\r\n`;
+    function constructHTTPRequest(params, url) {
+        let httpRequest = `${params.method ?? 'GET'} ${url}\r\n`;
         for (var pair of params.headers.entries()) {
             httpRequest += `${pair[0]}: ${pair[1]}\r\n`;
         }
@@ -1647,7 +1647,7 @@ async function inject() {
                     .join("\r\n");
             }
 
-            on_bytes_going_out(params);
+            on_bytes_going_out(params, url);
 
             // Wrap the AbortController with a new one that we control.
             //
@@ -1782,7 +1782,7 @@ async function inject() {
 
                     let s = decoder.decode(value)
 
-                    on_bytes_received(s)
+                    //on_bytes_received(s)
 
                     // Tell the parser to process some more stream
                     parser.read(s);
@@ -1812,10 +1812,16 @@ async function inject() {
 
                 // Now loop through the input and parse until we hit a dead end
                 do {
+                    let before = this.state.input;
+
                     this.state = parse_version(this.state);
+
+                    let after = this.state.input
 
                     // Maybe we parsed a version!  That's cool!
                     if (this.state.result === "success") {
+                        on_bytes_received(before.slice(0, before.length - after.length))
+
                         this.cb({
                             version: this.state.version,
                             parents: this.state.parents,

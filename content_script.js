@@ -1394,17 +1394,45 @@ async function inject() {
 
                     let v = oplog.getLocalVersion();
 
-                    let range = patches[0].range.split("-").map((x) => parseInt(x));
-
-                    oplog.addFromBytes(
-                        OpLog_create_bytes(
-                            version,
-                            parents,
-                            range[0],
-                            range[1] - range[0],
-                            patches[0].content
-                        )
-                    );
+                    let range = patches[0].range.match(/\d+/g).map((x) => parseInt(x));
+                    if (patches[0].content) {
+                        // insert
+                        let v = version
+                        let ps = parents
+                        for (let i = 0; i < patches[0].content.length; i++) {
+                            let c = patches[0].content[i]
+                            oplog.addFromBytes(
+                                OpLog_create_bytes(
+                                    v,
+                                    ps,
+                                    range[0] + i,
+                                    range[0] + i,
+                                    c
+                                )
+                            );
+                            ps = [v]
+                            v = JSON.parse(v)
+                            v = JSON.stringify([v[0], v[1] + 1])
+                        }
+                    } else {
+                        // delete
+                        let v = version
+                        let ps = parents
+                        for (let i = range[0]; i < range[1]; i++) {
+                            oplog.addFromBytes(
+                                OpLog_create_bytes(
+                                    v,
+                                    ps,
+                                    range[0],
+                                    range[1] - range[0],
+                                    patches[0].content
+                                )
+                            );
+                            ps = [v]
+                            v = JSON.parse(v)
+                            v = JSON.stringify([v[0], v[1] + 1])
+                        }
+                    }
 
                     let sel = [textarea.selectionStart, textarea.selectionEnd];
 
@@ -2095,8 +2123,8 @@ async function inject() {
             for (let i = 0; i < len; i++) {
                 ops.push({
                     range: op_run.content
-                        ? `${op_run.start + i}-${op_run.start + i}`
-                        : `${op_run.start}-${op_run.start + 1}`,
+                        ? `[${op_run.start + i}:${op_run.start + i}]`
+                        : `[${op_run.start}:${op_run.start + 1}]`,
                     insert: (op_run.content || "").slice(i, i + 1),
                 });
             }

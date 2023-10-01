@@ -1194,12 +1194,8 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
     if (request.action === "replace_html") {
         document.open();
         document.write(`  <body
-    style="padding:10px;margin:0px;width:100vw;height:100vh;box-sizing:border-box;display:grid;grid-template-rows:auto 1fr;background:yellow"
+    style="padding:10px;margin:0px;width:100vw;height:100vh;box-sizing:border-box;"
   >
-    <div>
-      <button onclick="on_download_file()">dt file</button>
-      <span id="id_info">dt size: loading..</span>
-    </div>
     <textarea
       id="texty"
       style="width:100%;height:100%"
@@ -1258,21 +1254,6 @@ async function inject() {
 
     let textarea = document.querySelector("#texty");
     let oplog = new OpLog(crypto.randomUUID());
-
-    window.on_download_file = () => {
-        let bytes = oplog.toBytes();
-        const blob = new Blob([bytes.buffer], {
-            type: "application/octet-stream",
-        });
-        const url = URL.createObjectURL(blob);
-
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = "oplog.bytes";
-        link.click();
-
-        setTimeout(() => URL.revokeObjectURL(url), 60000); // Cleanup after download
-    };
 
     textarea.addEventListener("input", async () => {
         let commonStart = 0;
@@ -1450,8 +1431,6 @@ async function inject() {
                     textarea.value = last_text = new_text;
                     textarea.selectionStart = new_sel[0];
                     textarea.selectionEnd = new_sel[1];
-
-                    id_info.textContent = `dt size: ${oplog.toBytes().length} bytes`;
                 },
                 (e) => {
                     console.log(`e = ${e}`);

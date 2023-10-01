@@ -1321,23 +1321,12 @@ async function inject() {
             let maxWait = 3000; // 3 seconds
             let waitTime = 100;
 
-            const fetchWithRetry = (url, options) => {
-                return braid.fetch(url, options).then(async (x) => {
-                    if (x.status !== 200) {
-                        console.log(`got BAD!`);
+            const fetchWithRetry = async (url, options) => {
+                while (true) {
+                    try {
+                        let x = await braid.fetch(url, { ...options })
+                        if (x.status !== 200) throw 'status not 200: ' + x.status
 
-                        waitTime *= 2;
-                        if (waitTime > maxWait) {
-                            waitTime = maxWait;
-                        }
-
-                        console.log(`Retrying in ${waitTime / 1000} seconds...`);
-
-                        setTimeout(() => {
-                            fetchWithRetry(url, options);
-                        }, waitTime);
-                    } else {
-                        // work here
                         let got = await x.text();
                         if (got == "ok!") {
                             ack_count++;
@@ -1346,8 +1335,20 @@ async function inject() {
                         }
 
                         console.log(`a counts: ${ack_count}/${sent_count}`);
+                        break;
+                    } catch (e) {
+                        console.log(`got BAD!: ${e}`);
+
+                        waitTime *= 2;
+                        if (waitTime > maxWait) {
+                            waitTime = maxWait;
+                        }
+
+                        console.log(`Retrying in ${waitTime / 1000} seconds...`);
+
+                        await new Promise(done => setTimeout(done, waitTime))
                     }
-                });
+                }
             };
 
             let ops = {
@@ -1406,7 +1407,6 @@ async function inject() {
                                     v,
                                     ps,
                                     range[0] + i,
-                                    range[0] + i,
                                     c
                                 )
                             );
@@ -1424,8 +1424,7 @@ async function inject() {
                                     v,
                                     ps,
                                     range[0],
-                                    range[1] - range[0],
-                                    patches[0].content
+                                    null
                                 )
                             );
                             ps = [v]
@@ -1662,7 +1661,7 @@ async function inject() {
                     Array.isArray(params.patches),
                     "Patches must be array"
                 );
-                console.assert(!params.body, "Cannot send both patches and body");
+                console.assert(!params.body, "Cannot send both patches and body:: " + JSON.stringify(params, null, 4));
 
                 params.patches = params.patches || [];
                 params.headers.set("patches", params.patches.length);
@@ -2115,37 +2114,50 @@ async function inject() {
     }
 
     function OpLog_get_patches(bytes, op_runs) {
-        //   console.log(`bytes = `, bytes);
-
-        let ops = [];
-        for (let op_run of op_runs) {
-            let len = op_run.end - op_run.start;
-            for (let i = 0; i < len; i++) {
-                ops.push({
-                    range: op_run.content
-                        ? `[${op_run.start + i}:${op_run.start + i}]`
-                        : `[${op_run.start}:${op_run.start + 1}]`,
-                    insert: (op_run.content || "").slice(i, i + 1),
-                });
-            }
-        }
-
-        //   console.log(`ops = ${JSON.stringify(ops, null, 4)}`);
+        console.log(`op_runs = `, op_runs);
 
         let [agents, versions, parentss] = parseDT([...bytes]);
 
-        //   console.log(JSON.stringify({ agents, versions, parentss }, null, 4));
+        // console.log(JSON.stringify({ agents, versions, parentss }, null, 4))
 
-        return versions.map((v, i) => {
-            // console.log(`v = ${v}, i = ${i}`);
-            return {
-                version: JSON.stringify(v),
-                parents: parentss[i].map((x) => JSON.stringify(x)),
-                unit: "json",
-                range: ops[i].range,
-                content: ops[i].insert,
-            };
+        let i = 0;
+        let patches = [];
+        op_runs.forEach((op_run) => {
+            let version = JSON.stringify(versions[i]);
+            let parents = parentss[i].map((x) => JSON.stringify(x));
+            let start = op_run.start;
+            let end = start + 1;
+            let content = op_run.content?.[0];
+            let len = op_run.end - op_run.start;
+            for (let j = 1; j <= len; j++) {
+                let I = i + j;
+                if (
+                    j == len ||
+                    parentss[I].length != 1 ||
+                    parentss[I][0][0] != versions[I - 1][0] ||
+                    parentss[I][0][1] != versions[I - 1][1] ||
+                    versions[I][0] != versions[I - 1][0] ||
+                    versions[I][1] != versions[I - 1][1] + 1
+                ) {
+                    patches.push({
+                        version,
+                        parents,
+                        unit: "json",
+                        range: content ? `[${start}:${start}]` : `[${start}:${end}]`,
+                        content: content ?? "",
+                    });
+                    if (j == len) break;
+                    version = JSON.stringify(versions[I]);
+                    parents = parentss[I].map((x) => JSON.stringify(x));
+                    start = op_run.start + j;
+                    content = "";
+                }
+                end++;
+                if (op_run.content) content += op_run.content[j];
+            }
+            i += len;
         });
+        return patches;
 
         function parseDT(byte_array) {
             if (
@@ -2251,7 +2263,7 @@ async function inject() {
         }
     }
 
-    function OpLog_create_bytes(version, parents, pos, del, ins) {
+    function OpLog_create_bytes(version, parents, pos, ins) {
         //   console.log(
         //     `args = ${JSON.stringify({ version, parents, pos, del, ins }, null, 4)}`
         //   );

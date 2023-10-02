@@ -1194,12 +1194,12 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
     if (request.action === "replace_html") {
         document.open();
         document.write(`  <body
-    style="padding:1px;margin:0px;width:100svw;height:100svh;box-sizing:border-box;"
+    style="padding:0px;margin:0px; width: calc(100vw - 22px); height: calc(100vh - 26px);box-sizing:border-box;"
   >
     <script src="${chrome.runtime.getURL('braid-http-client.js')}"></script>
     <textarea
       id="texty"
-      style="width:100%;height:100%"
+      style="width: 100%; height:100%; padding: 10px;"
       autofocus
       readonly
       placeholder="loading.."

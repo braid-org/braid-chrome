@@ -1193,26 +1193,31 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
 
     if (request.action === "replace_html") {
         document.open();
-        document.write(`  <body
-    style="padding:0px;margin:0px; width: calc(100vw - 16px); height: calc(100vh - 30px);box-sizing:border-box;"
-  >
-    <script src="${chrome.runtime.getURL('braid-http-client.js')}"></script>
-    <textarea
-      id="texty"
-      style="width: 100%; height:100%; padding: 12px 7px; font-size: 13px;"
-      autofocus
-      readonly
-      placeholder="loading.."
-    ></textarea>
-  </body>
-`);
+        document.write(`
+        <body
+            style="padding:0px;margin:0px; width: calc(100vw - 16px); height: calc(100vh - 30px);box-sizing:border-box;"
+        >
+            <script src="${chrome.runtime.getURL('braid-http-client.js')}"></script>
+            <textarea
+            id="texty"
+            style="width: 100%; height:100%; padding: 12px 7px; font-size: 13px;"
+            autofocus
+            readonly
+            placeholder="loading.."
+            ></textarea>
+        </body>
+        `);
         document.close();
         await inject()
     }
 });
 
 async function inject() {
-    let port = 60402;
+    let enter_error_state = (why) => {
+        console.log(`enter_error_state because: ${why}`)
+        textarea.style.background = 'pink'
+    }
+
     var braid = {fetch: braid_fetch}
 
     let on_bytes_received = s => {
@@ -1417,8 +1422,10 @@ async function inject() {
 
                     let sel = [textarea.selectionStart, textarea.selectionEnd];
 
-                    if (textarea.value != last_text)
+                    if (textarea.value != last_text) {
+                        enter_error_state("textarea out of sync somehow!");
                         throw new Error("textarea out of sync somehow!");
+                    }
 
                     // work here
                     // console.log(`op log = ${JSON.stringify(oplog.getXFSince(v), null, 4)}`)

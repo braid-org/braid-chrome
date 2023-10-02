@@ -17,3 +17,5 @@ Features:
 2. Open chrome://extensions in chrome
 3. Click "Load unpacked"
 4. Choose the `braid-chrome` directory you just created
+
+Try it out at https://dt.braid.org.

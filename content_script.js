@@ -1194,7 +1194,7 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
     if (request.action === "replace_html") {
         document.open();
         document.write(`  <body
-    style="padding:10px;margin:0px;width:100vw;height:100vh;box-sizing:border-box;"
+    style="padding:1px;margin:0px;width:100svw;height:100svh;box-sizing:border-box;"
   >
     <textarea
       id="texty"
@@ -1253,7 +1253,7 @@ async function inject() {
     let ack_count = 0;
 
     let textarea = document.querySelector("#texty");
-    let oplog = new OpLog(crypto.randomUUID());
+    let oplog = new OpLog(Math.random().toString(36).substr(2));
 
     textarea.addEventListener("input", async () => {
         let commonStart = 0;

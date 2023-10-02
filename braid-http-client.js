@@ -139,7 +139,7 @@ if (is_nodejs) {
     // window.fetch = braid_fetch
 }
 
-async function braid_fetch (url, params = {}) {
+async function braid_fetch (url, params = {}, on_bytes_received, on_bytes_going_out) {
     params = {...params}  // Copy params, because we'll mutate it
 
     // Initialize the headers object
@@ -189,6 +189,8 @@ async function braid_fetch (url, params = {}) {
             }).join('\r\n')
         }
     }
+
+    on_bytes_going_out?.(params, url);      
 
     // Wrap the AbortController with a new one that we control.
     //
@@ -250,7 +252,8 @@ async function braid_fetch (url, params = {}) {
                     else
                         throw 'Unhandled network error in subscription'
                 }
-            }
+            },
+            on_bytes_received
         )
     }
 
@@ -301,14 +304,14 @@ async function braid_fetch (url, params = {}) {
 }
 
 // Parse a stream of versions from the incoming bytes
-async function handle_fetch_stream (stream, cb) {
+async function handle_fetch_stream (stream, cb, on_bytes_received) {
     if (is_nodejs)
         stream = to_whatwg_stream(stream)
 
     // Set up a reader
     var reader = stream.getReader(),
         decoder = new TextDecoder('utf-8'),
-        parser = subscription_parser(cb)
+        parser = subscription_parser(cb, on_bytes_received)
     
     while (true) {
         var versions = []
@@ -342,7 +345,7 @@ async function handle_fetch_stream (stream, cb) {
 // ****************************
 
 
-var subscription_parser = (cb) => ({
+var subscription_parser = (cb, on_bytes_received) => ({
     // A parser keeps some parse state
     state: {input: ''},
 
@@ -358,10 +361,14 @@ var subscription_parser = (cb) => ({
 
         // Now loop through the input and parse until we hit a dead end
         do {
+            let before = this.state.input
             this.state = parse_version (this.state)
+            let after = this.state.input
 
             // Maybe we parsed a version!  That's cool!
             if (this.state.result === 'success') {
+                on_bytes_received?.(before.slice(0, before.length - after.length))
+
                 this.cb({
                     version: this.state.version,
                     parents: this.state.parents,

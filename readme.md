@@ -18,4 +18,4 @@ Features:
 3. Click "Load unpacked"
 4. Choose the `braid-chrome` directory you just created
 
-Try it out at https://dt.braid.org.
+Try it out at https://dt.braid.org/foo.txt.

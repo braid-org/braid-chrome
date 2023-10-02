@@ -18,4 +18,5 @@ Features:
 3. Click "Load unpacked"
 4. Choose the `braid-chrome` directory you just created
 
-Try it out at https://dt.braid.org/foo.txt.
+Try it out at https://dt.braid.org/foo.txt.  You probably have to click the
+extension and make sure it has permissions to load on dt.braid.org.

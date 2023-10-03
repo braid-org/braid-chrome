@@ -1216,6 +1216,7 @@ async function inject() {
     let enter_error_state = (why) => {
         console.log(`enter_error_state because: ${why}`)
         textarea.style.background = 'pink'
+        textarea.style.color = '#800'
         textarea.disabled = true
     }
     window.errorify = (msg) => {

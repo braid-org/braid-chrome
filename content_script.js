@@ -1196,11 +1196,11 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
         document.write(`
         <script src="${chrome.runtime.getURL('braid-http-client.js')}"></script>
         <body
-            style="padding:0px;margin:0px; width: calc(100vw - 16px); height: calc(100vh - 30px);box-sizing:border-box;"
+            style="padding: 0px; margin: 0px; width: calc(100vw); height: calc(100vh - 5px); box-sizing: border-box;"
         >
             <textarea
             id="texty"
-            style="width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0;"
+            style="width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box;"
             autofocus
             readonly
             placeholder="loading.."
@@ -1216,6 +1216,11 @@ async function inject() {
     let enter_error_state = (why) => {
         console.log(`enter_error_state because: ${why}`)
         textarea.style.background = 'pink'
+        textarea.disabled = true
+    }
+    window.errorify = (msg) => {
+        enter_error_state(msg)
+        throw new Error(msg)
     }
 
     var braid = {fetch: braid_fetch}
@@ -1382,49 +1387,51 @@ async function inject() {
 
                     let v = oplog.getLocalVersion();
 
-                    let range = patches[0].range.match(/\d+/g).map((x) => parseInt(x));
-                    if (patches[0].content) {
-                        // insert
-                        let v = version
-                        let ps = parents
-                        for (let i = 0; i < patches[0].content.length; i++) {
-                            let c = patches[0].content[i]
-                            oplog.addFromBytes(
-                                OpLog_create_bytes(
-                                    v,
-                                    ps,
-                                    range[0] + i,
-                                    c
-                                )
-                            );
-                            ps = [v]
-                            v = JSON.parse(v)
-                            v = JSON.stringify([v[0], v[1] + 1])
+                    try {
+                        let range = patches[0].range.match(/\d+/g).map((x) => parseInt(x));
+                        if (patches[0].content) {
+                            // insert
+                            let v = version
+                            let ps = parents
+                            for (let i = 0; i < patches[0].content.length; i++) {
+                                let c = patches[0].content[i]
+                                oplog.addFromBytes(
+                                    OpLog_create_bytes(
+                                        v,
+                                        ps,
+                                        range[0] + i,
+                                        c
+                                    )
+                                );
+                                ps = [v]
+                                v = JSON.parse(v)
+                                v = JSON.stringify([v[0], v[1] + 1])
+                            }
+                        } else {
+                            // delete
+                            let v = version
+                            let ps = parents
+                            for (let i = range[0]; i < range[1]; i++) {
+                                oplog.addFromBytes(
+                                    OpLog_create_bytes(
+                                        v,
+                                        ps,
+                                        range[0],
+                                        null
+                                    )
+                                );
+                                ps = [v]
+                                v = JSON.parse(v)
+                                v = JSON.stringify([v[0], v[1] + 1])
+                            }
                         }
-                    } else {
-                        // delete
-                        let v = version
-                        let ps = parents
-                        for (let i = range[0]; i < range[1]; i++) {
-                            oplog.addFromBytes(
-                                OpLog_create_bytes(
-                                    v,
-                                    ps,
-                                    range[0],
-                                    null
-                                )
-                            );
-                            ps = [v]
-                            v = JSON.parse(v)
-                            v = JSON.stringify([v[0], v[1] + 1])
-                        }
+                    } catch (e) {
+                        errorify(e)
                     }
-
                     let sel = [textarea.selectionStart, textarea.selectionEnd];
 
                     if (textarea.value != last_text) {
-                        enter_error_state("textarea out of sync somehow!");
-                        throw new Error("textarea out of sync somehow!");
+                        errorify("textarea out of sync somehow!")
                     }
 
                     // work here
@@ -1481,7 +1488,7 @@ async function inject() {
                         original.substring(change.start);
                     break;
                 default:
-                    throw new Error(`Unsupported change kind: ${change.kind}`);
+                    errorify(`Unsupported change kind: ${change.kind}`)
             }
         }
         return [original, sel];
@@ -1538,10 +1545,10 @@ async function inject() {
                 new TextDecoder().decode(new Uint8Array(byte_array.splice(0, 8))) !==
                 "DMNDTYPS"
             )
-                throw new Error("dt parse error, expected DMNDTYPS");
+                errorify("dt parse error, expected DMNDTYPS");
 
             if (byte_array.shift() != 0)
-                throw new Error("dt parse error, expected version 0");
+                errorify("dt parse error, expected version 0");
 
             let agents = [];
             let versions = [];
@@ -1624,7 +1631,7 @@ async function inject() {
                 let shift = 0;
                 while (true) {
                     if (byte_array.length === 0)
-                        throw new Error("byte array does not contain varint");
+                        errorify("byte array does not contain varint");
 
                     let byte_val = byte_array.shift();
                     result |= (byte_val & 0x7f) << shift;

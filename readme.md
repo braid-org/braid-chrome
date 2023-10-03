@@ -4,12 +4,14 @@ Chrome Extension adding Braid directly into your browser.
 
 Features:
 - [x] Live-updates any Braid page, without the reload button
+  - Adds `Subscribe: true` to GET requests when your browser loads a page
+  - Updates the page live as updates occur to it
 - [x] Collaborative editing for text, markdown, javascript, and json URLs
   - [x] Supports diamond-types merge-type
 - [x] Braid developer tools:
   - [x] Watch the network messages
   - [ ] View and navigate version history
-  - [ ] Collaborative editing
+  - [ ] Edit the current page
 
 ## Installation
 

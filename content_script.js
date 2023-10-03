@@ -1405,8 +1405,8 @@ async function inject() {
                                     )
                                 );
                                 ps = [v]
-                                v = JSON.parse(v)
-                                v = JSON.stringify([v[0], v[1] + 1])
+                                v = decode_version(v)
+                                v = [v[0], v[1] + 1].join('-')
                             }
                         } else {
                             // delete
@@ -1422,8 +1422,8 @@ async function inject() {
                                     )
                                 );
                                 ps = [v]
-                                v = JSON.parse(v)
-                                v = JSON.stringify([v[0], v[1] + 1])
+                                v = decode_version(v)
+                                v = [v[0], v[1] + 1].join('-')
                             }
                         }
                     } catch (e) {
@@ -1505,8 +1505,8 @@ async function inject() {
         let i = 0;
         let patches = [];
         op_runs.forEach((op_run) => {
-            let version = JSON.stringify(versions[i]);
-            let parents = parentss[i].map((x) => JSON.stringify(x));
+            let version = versions[i].join('-')
+            let parents = parentss[i].map((x) => x.join('-'));
             let start = op_run.start;
             let end = start + 1;
             let content = op_run.content?.[0];
@@ -1529,8 +1529,8 @@ async function inject() {
                         content: content ?? "",
                     });
                     if (j == len) break;
-                    version = JSON.stringify(versions[I]);
-                    parents = parentss[I].map((x) => JSON.stringify(x));
+                    version = versions[I].join('-');
+                    parents = parentss[I].map((x) => x.join('-'));
                     start = op_run.start + j;
                     content = "";
                 }
@@ -1664,8 +1664,8 @@ async function inject() {
             byte_array.push(...str_bytes);
         }
 
-        version = JSON.parse(version);
-        parents = parents.map((x) => JSON.parse(x));
+        version = decode_version(version);
+        parents = parents.map(decode_version);
 
         let bytes = [];
         bytes = bytes.concat(Array.from(new TextEncoder().encode("DMNDTYPS")));
@@ -1794,4 +1794,10 @@ async function inject() {
 
         return bytes;
     }
+}
+
+function decode_version(v) {
+    let a = v.split('-')
+    if (a.length > 1) a[1] = parseInt(a[1])
+    return a
 }

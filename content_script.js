@@ -1309,6 +1309,11 @@ async function inject() {
         )) {
             //   console.log(JSON.stringify(p));
 
+            p.version = decode_version(p.version)
+            if (p.end - p.start < 1) throw 'unexpected patch with nothing'
+            p.version[1] += p.end - p.start - 1
+            p.version = p.version.join('-')
+
             sent_count++;
             console.log(`s counts: ${ack_count}/${sent_count}`);
 
@@ -1400,6 +1405,11 @@ async function inject() {
 
                     try {
                         let range = patches[0].range.match(/\d+/g).map((x) => parseInt(x));
+
+                        version = decode_version(version)
+                        version[1] -= (patches[0].content ? patches[0].content.length : range[1] - range[0]) - 1
+                        version = version.join('-')
+
                         if (patches[0].content) {
                             // insert
                             let v = version
@@ -1539,6 +1549,8 @@ async function inject() {
                         unit: "json",
                         range: content ? `[${start}:${start}]` : `[${start}:${end}]`,
                         content: content ?? "",
+                        start,
+                        end
                     });
                     if (j == len) break;
                     version = versions[I].join('-');

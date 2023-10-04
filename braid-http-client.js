@@ -139,7 +139,9 @@ if (is_nodejs) {
     // window.fetch = braid_fetch
 }
 
-async function braid_fetch (url, params = {}, on_bytes_received, on_bytes_going_out) {
+async function braid_fetch (url, params = {},
+                            // These params are for debugging:
+                            on_bytes_received, on_bytes_sent) {
     params = {...params}  // Copy params, because we'll mutate it
 
     // Initialize the headers object
@@ -190,7 +192,7 @@ async function braid_fetch (url, params = {}, on_bytes_received, on_bytes_going_
         }
     }
 
-    on_bytes_going_out?.(params, url);      
+    if (on_bytes_sent) on_bytes_sent(params, url)
 
     // Wrap the AbortController with a new one that we control.
     //
@@ -367,7 +369,9 @@ var subscription_parser = (cb, on_bytes_received) => ({
 
             // Maybe we parsed a version!  That's cool!
             if (this.state.result === 'success') {
-                on_bytes_received?.(before.slice(0, before.length - after.length))
+                if (on_bytes_received) on_bytes_received(
+                    before.slice(0, before.length - after.length)
+                )
 
                 this.cb({
                     version: this.state.version,

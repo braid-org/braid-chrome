@@ -1198,6 +1198,7 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
         <body
             style="padding: 0px; margin: 0px; width: calc(100vw); height: calc(100vh - 5px); box-sizing: border-box;"
         >
+            <span id="online" style="position: absolute; top: 5px; right: 5px;">•</span>
             <textarea
             id="texty"
             style="width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box;"
@@ -1361,6 +1362,14 @@ async function inject() {
         }
     });
 
+    window.subscription_online = false
+    function set_subscription_online (bool) {
+        if (subscription_online === bool) return
+        subscription_online = bool
+        console.log(bool ? 'Connected!' : 'Disconnected.')
+        var online = document.querySelector("#online").style
+        online.color = bool ? 'lime' : 'orange';
+    }
     async function connect() {
         try {
             (
@@ -1369,6 +1378,7 @@ async function inject() {
                 }, on_bytes_received, on_bytes_going_out)
             ).subscribe(
                 ({ version, parents, body, patches }) => {
+                    set_subscription_online(true)
                     //   console.log(
                     //     `v = ${JSON.stringify(
                     //       { version, parents, body, patches },
@@ -1450,11 +1460,13 @@ async function inject() {
                 },
                 (e) => {
                     console.log(`e = ${e}`);
+                    set_subscription_online(false)
                     setTimeout(connect, 1000);
                 }
             );
         } catch (e) {
             console.log(`e = ${e}`);
+            set_subscription_online(false)
             setTimeout(connect, 1000);
         }
     }

@@ -1380,6 +1380,7 @@ async function inject() {
             (
                 await braid.fetch(window.location.href, {
                     subscribe: true,
+                    parents: oplog.getRemoteVersion().map(x => x.join('-'))
                 }, on_bytes_received, on_bytes_going_out)
             ).subscribe(
                 ({ version, parents, body, patches }) => {

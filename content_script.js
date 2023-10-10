@@ -1351,7 +1351,7 @@ async function inject() {
             };
 
             let ops = {
-                method: "POST",
+                method: "PUT",
                 mode: "cors",
                 version: p.version,
                 parents: p.parents,

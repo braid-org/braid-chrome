@@ -1315,6 +1315,7 @@ async function inject() {
             p.version = p.version.join('-')
 
             sent_count++;
+            texty.style.caretColor = 'orange'
             console.log(`s counts: ${ack_count}/${sent_count}`);
 
             let maxWait = 3000; // 3 seconds
@@ -1329,6 +1330,10 @@ async function inject() {
                         let got = await x.text();
                         if (got == "ok!") {
                             ack_count++;
+
+                            if (ack_count == sent_count) {
+                                texty.style.caretColor = 'auto'
+                            }
                         } else {
                             console.log(`bad 200: ${got}`);
                         }

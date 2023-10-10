@@ -1357,7 +1357,7 @@ async function inject() {
                 parents: p.parents,
                 patches: [
                     {
-                        unit: "json",
+                        unit: p.unit,
                         range: p.range,
                         content: p.content,
                     },
@@ -1547,7 +1547,7 @@ async function inject() {
                     patches.push({
                         version,
                         parents,
-                        unit: "json",
+                        unit: "text",
                         range: content ? `[${start}:${start}]` : `[${start}:${end}]`,
                         content: content ?? "",
                         start,

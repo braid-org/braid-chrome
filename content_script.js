@@ -1204,7 +1204,7 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
             style="width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box;"
             autofocus
             readonly
-            placeholder="loading.."
+            disabled
             ></textarea>
         </body>
         `);
@@ -1408,8 +1408,9 @@ async function inject() {
                     // chrome.runtime.sendMessage({ action: "braid_in", data: { version, parents, body, patches } });
 
                     if (textarea.hasAttribute("readonly")) {
-                        textarea.removeAttribute("readonly");
-                        textarea.placeholder = "type message here..";
+                        textarea.removeAttribute("readonly")
+                        textarea.removeAttribute('disabled')
+                        textarea.focus()
                     }
 
                     if (!patches) return;

@@ -358,6 +358,8 @@ var subscription_parser = (cb, on_bytes_received) => ({
     // report back with new versions as soon as it finds them.
     read (input) {
 
+        if (on_bytes_received) on_bytes_received(input)
+
         // Store the new input!
         this.state.input += input
 
@@ -369,9 +371,9 @@ var subscription_parser = (cb, on_bytes_received) => ({
 
             // Maybe we parsed a version!  That's cool!
             if (this.state.result === 'success') {
-                if (on_bytes_received) on_bytes_received(
-                    before.slice(0, before.length - after.length)
-                )
+                // if (on_bytes_received) on_bytes_received(
+                //     before.slice(0, before.length - after.length)
+                // )
 
                 this.cb({
                     version: this.state.version,

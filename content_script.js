@@ -1383,13 +1383,20 @@ async function inject() {
     async function connect() {
         try {
             (
-                await braid.fetch(window.location.href, {
-                    subscribe: true,
-                    parents: oplog.getRemoteVersion().map(x => x.join('-'))
-                }, on_bytes_received, on_bytes_going_out)
+                await braid.fetch(window.location.href,
+                                  {
+                                      subscribe: true,
+                                      parents: oplog.getRemoteVersion().map(x => x.join('-'))
+                                  },
+                                  (x) => {
+                                      on_bytes_received(x)
+                                      set_subscription_online(true)
+                                  },
+                                  on_bytes_going_out
+                                 )
             ).subscribe(
                 ({ version, parents, body, patches }) => {
-                    set_subscription_online(true)
+                    // set_subscription_online(true)
                     //   console.log(
                     //     `v = ${JSON.stringify(
                     //       { version, parents, body, patches },

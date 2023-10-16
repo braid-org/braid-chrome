@@ -7,6 +7,9 @@ chrome.webRequest.onCompleted.addListener(
 
         console.log('got here..')
 
+        const contentType = details.responseHeaders.find(x => x.name.toLowerCase() === 'content-type');
+        console.log('Content Type:', contentType);
+
         chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
             console.log('gonna try22.2..')
 
@@ -14,7 +17,8 @@ chrome.webRequest.onCompleted.addListener(
             chrome.tabs.onUpdated.addListener(function callback(tabId, info, tab) {
                 // Check if tab update status is 'complete' and the updated tab is the current active tab
                 if (info.status === 'complete' && tabId === tabs[0].id) {
-                    chrome.tabs.sendMessage(tabs[0].id, { action: "replace_html" });
+                    chrome.tabs.sendMessage(tabs[0].id, { action: "replace_html", content_type: contentType.value});
+
                     // Remove the listener after you're done
                     chrome.tabs.onUpdated.removeListener(callback);
                 }

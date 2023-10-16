@@ -1188,10 +1188,11 @@ async function __wbg_init(input) {
 ////////////////////////////////////////////////////////////////////////////////
 
 chrome.runtime.onMessage.addListener(async function (request, sender, sendResponse) {
-
     console.log(`getting message with action: ${request.action}`)
+    if (request.action != "replace_html") return;
 
-    if (request.action === "replace_html") {
+    console.log(`content_type: ${request.content_type}`)
+    if (request.content_type === "text/plain") {
         document.open();
         document.write(`
         <script src="${chrome.runtime.getURL('braid-http-client.js')}"></script>
@@ -1210,6 +1211,27 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
         `);
         document.close();
         await inject()
+    } else if (request.content_type === "application/json") {
+        document.open();
+        document.write(`
+        <script src="${chrome.runtime.getURL('braid-http-client.js')}"></script>
+        <script src="${chrome.runtime.getURL('apply-patch.js')}"></script>
+        <body
+            style="padding: 0px; margin: 0px; width: calc(100vw); height: calc(100vh - 5px); box-sizing: border-box;"
+        >
+            <span id="online" style="position: absolute; top: 5px; right: 5px;">•</span>
+            <textarea
+            id="texty"
+            style="width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box;"
+            autofocus
+            readonly
+            placeholder="JSON!"
+            ></textarea>
+        </body>
+        `);
+        document.close();
+
+       window.onload = () => inject_json()
     }
 });
 
@@ -1824,6 +1846,96 @@ async function inject() {
 
         return bytes;
     }
+}
+
+async function inject_json() {
+    let enter_error_state = (why) => {
+        console.log(`enter_error_state because: ${why}`)
+        textarea.style.background = 'pink'
+        textarea.style.color = '#800'
+        textarea.disabled = true
+    }
+    window.errorify = (msg) => {
+        enter_error_state(msg)
+        throw new Error(msg)
+    }
+
+    var braid = {fetch: braid_fetch}
+
+    let on_bytes_received = s => {
+        console.log(`on_bytes_received[${s.slice(0, 500)}]`)
+        chrome.runtime.sendMessage({ action: "braid_in", data: s });
+    }
+
+    let on_bytes_going_out = (params, url) => {
+        console.log(`on_bytes_going_out[${constructHTTPRequest(params, url)}]`)
+        chrome.runtime.sendMessage({ action: "braid_out", data: constructHTTPRequest(params, url) });
+    }
+
+    function constructHTTPRequest(params, url) {
+        let httpRequest = `${params.method ?? 'GET'} ${url}\r\n`;
+        for (var pair of params.headers.entries()) {
+            httpRequest += `${pair[0]}: ${pair[1]}\r\n`;
+        }
+        httpRequest += '\r\n';
+        if (['POST', 'PATCH', 'PUT'].includes(params.method?.toUpperCase()) && params.body) {
+            httpRequest += params.body;
+        }
+        return httpRequest;
+    }
+
+    let doc = null;
+
+    let sent_count = 0;
+    let ack_count = 0;
+
+    let textarea = document.querySelector("#texty");
+
+    window.subscription_online = false
+    function set_subscription_online (bool) {
+        if (subscription_online === bool) return
+        subscription_online = bool
+        console.log(bool ? 'Connected!' : 'Disconnected.')
+        var online = document.querySelector("#online").style
+        online.color = bool ? 'lime' : 'orange';
+    }
+    async function connect() {
+        try {
+            (
+                await braid.fetch(window.location.href, {
+                    subscribe: true
+                }, on_bytes_received, on_bytes_going_out)
+            ).subscribe(
+                ({ version, parents, body, patches }) => {
+                    set_subscription_online(true)
+                      console.log(
+                        `v = ${JSON.stringify(
+                          { version, parents, body, patches },
+                          null,
+                          4
+                        )}`
+                      );
+
+                    try {
+                        doc = apply_patch(doc, patches[0].range, JSON.parse(patches[0].content))
+                    } catch (e) {
+                        location.reload()
+                    }
+                    textarea.value = JSON.stringify(doc)
+                },
+                (e) => {
+                    console.log(`e = ${e}`);
+                    set_subscription_online(false)
+                    setTimeout(connect, 1000);
+                }
+            );
+        } catch (e) {
+            console.log(`e = ${e}`);
+            set_subscription_online(false)
+            setTimeout(connect, 1000);
+        }
+    }
+    connect();
 }
 
 function decode_version(v) {

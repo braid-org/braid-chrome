@@ -1205,7 +1205,7 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
             style="width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box;"
             autofocus
             readonly
-            placeholder="loading.."
+            disabled
             ></textarea>
         </body>
         `);
@@ -1405,13 +1405,20 @@ async function inject() {
     async function connect() {
         try {
             (
-                await braid.fetch(window.location.href, {
-                    subscribe: true,
-                    parents: oplog.getRemoteVersion().map(x => x.join('-'))
-                }, on_bytes_received, on_bytes_going_out)
+                await braid.fetch(window.location.href,
+                                  {
+                                      subscribe: true,
+                                      parents: oplog.getRemoteVersion().map(x => x.join('-'))
+                                  },
+                                  (x) => {
+                                      on_bytes_received(x)
+                                      set_subscription_online(true)
+                                  },
+                                  on_bytes_going_out
+                                 )
             ).subscribe(
                 ({ version, parents, body, patches }) => {
-                    set_subscription_online(true)
+                    // set_subscription_online(true)
                     //   console.log(
                     //     `v = ${JSON.stringify(
                     //       { version, parents, body, patches },
@@ -1423,8 +1430,9 @@ async function inject() {
                     // chrome.runtime.sendMessage({ action: "braid_in", data: { version, parents, body, patches } });
 
                     if (textarea.hasAttribute("readonly")) {
-                        textarea.removeAttribute("readonly");
-                        textarea.placeholder = "type message here..";
+                        textarea.removeAttribute("readonly")
+                        textarea.removeAttribute('disabled')
+                        textarea.focus()
                     }
 
                     if (!patches) return;

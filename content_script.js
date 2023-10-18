@@ -1288,7 +1288,8 @@ async function inject() {
     let ack_count = 0;
 
     let textarea = document.querySelector("#texty");
-    let oplog = new OpLog(Math.random().toString(36).substr(2));
+
+    let oplog = new OpLog(peer);
 
     textarea.addEventListener("input", async () => {
         let commonStart = 0;

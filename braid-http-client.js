@@ -1,4 +1,4 @@
-var peer = Math.random().toString(36).substr(2)
+var peer = Math.random().toString(36).slice(2, 7)
 
 // ***************************
 // http

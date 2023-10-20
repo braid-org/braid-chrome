@@ -176,6 +176,9 @@ async function braid_fetch (url, params = {},
         // If just one patch, send it directly!
         if (params.patches.length === 1) {
             let patch = params.patches[0]
+            // console.log('1. Generating a patch header of',
+            //             JSON.stringify('Content-Range'),
+            //             JSON.stringify(`${patch.unit} ${patch.range}`))
             params.headers.set('Content-Range', `${patch.unit} ${patch.range}`)
             params.headers.set('Content-Length', `${patch.content.length}`)
             params.body = patch.content
@@ -185,6 +188,8 @@ async function braid_fetch (url, params = {},
         else {
             params.headers.set('Patches', params.patches.length)
             params.body = (params.patches).map(patch => {
+                // console.log('2. Generating a patch header of',
+                //             'Content-Range', `${patch.unit} ${patch.range}`)
                 var length = `content-length: ${patch.content.length}`
                 var range = `content-range: ${patch.unit} ${patch.range}`
                 return `${length}\r\n${range}\r\n\r\n${patch.content}\r\n`

@@ -2,13 +2,18 @@
 window.onload = function () {
     try {
         reload_button.style.border = '3px solid yellow'
-        reload_button.onclick = () => {
+
+        function tell_page_to_load_new_content_type() {
             try {
                 chrome.runtime.sendMessage({ from: "dev", content_type: content_type_select.value });
             } catch (e) {
                 alert(`e = ${e.stack}`)
             }
         }
+
+        reload_button.onclick = tell_page_to_load_new_content_type
+        content_type_select.onchange = tell_page_to_load_new_content_type
+        
         const backgroundConnection = chrome.runtime.connect({
             name: "devtools-panel"
         });

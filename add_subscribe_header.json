@@ -1,0 +1,17 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "requestHeaders": [
+        {
+          "header": "Subscribe",
+          "operation": "set",
+          "value": "true"
+        }
+      ]
+    },
+    "condition": {"urlFilter": "*", "resourceTypes": ["main_frame"]}
+  }
+]

@@ -1,3 +1,9 @@
+// This file implements Diamond-Types for text editing.
+//
+// It uses the DT WASM module, and adds some Javascript code to dig into the
+// DT binary format to pull out additional information we need that the WASM
+// module doesn't provide.
+
 let wasm;
 
 const heap = new Array(128).fill(undefined);
@@ -155,7 +161,7 @@ function passArray8ToWasm0(arg, malloc) {
     return ptr;
 }
 
-function handleError(f, args) {
+function handle_wasm_error(f, args) {
     try {
         return f.apply(this, args);
     } catch (e) {
@@ -991,12 +997,12 @@ function __wbg_get_imports() {
         }
     };
     imports.wbg.__wbg_randomFillSync_065afffde01daa66 = function () {
-        return handleError(function (arg0, arg1, arg2) {
+        return handle_wasm_error(function (arg0, arg1, arg2) {
             getObject(arg0).randomFillSync(getArrayU8FromWasm0(arg1, arg2));
         }, arguments)
     };
     imports.wbg.__wbg_getRandomValues_b99eec4244a475bb = function () {
-        return handleError(function (arg0, arg1) {
+        return handle_wasm_error(function (arg0, arg1) {
             getObject(arg0).getRandomValues(getObject(arg1));
         }, arguments)
     };
@@ -1029,7 +1035,7 @@ function __wbg_get_imports() {
         return addHeapObject(ret);
     };
     imports.wbg.__wbg_require_a746e79b322b9336 = function () {
-        return handleError(function (arg0, arg1, arg2) {
+        return handle_wasm_error(function (arg0, arg1, arg2) {
             const ret = getObject(arg0).require(getStringFromWasm0(arg1, arg2));
             return addHeapObject(ret);
         }, arguments)
@@ -1043,7 +1049,7 @@ function __wbg_get_imports() {
         return addHeapObject(ret);
     };
     imports.wbg.__wbg_call_f96b398515635514 = function () {
-        return handleError(function (arg0, arg1) {
+        return handle_wasm_error(function (arg0, arg1) {
             const ret = getObject(arg0).call(getObject(arg1));
             return addHeapObject(ret);
         }, arguments)
@@ -1064,25 +1070,25 @@ function __wbg_get_imports() {
         return addHeapObject(ret);
     };
     imports.wbg.__wbg_self_b9aad7f1c618bfaf = function () {
-        return handleError(function () {
+        return handle_wasm_error(function () {
             const ret = self.self;
             return addHeapObject(ret);
         }, arguments)
     };
     imports.wbg.__wbg_window_55e469842c98b086 = function () {
-        return handleError(function () {
+        return handle_wasm_error(function () {
             const ret = window.window;
             return addHeapObject(ret);
         }, arguments)
     };
     imports.wbg.__wbg_globalThis_d0957e302752547e = function () {
-        return handleError(function () {
+        return handle_wasm_error(function () {
             const ret = globalThis.globalThis;
             return addHeapObject(ret);
         }, arguments)
     };
     imports.wbg.__wbg_global_ae2f87312b8987fb = function () {
-        return handleError(function () {
+        return handle_wasm_error(function () {
             const ret = global.global;
             return addHeapObject(ret);
         }, arguments)
@@ -1177,793 +1183,309 @@ async function __wbg_init(input) {
     return __wbg_finalize_init(instance, module);
 }
 
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
 
-chrome.runtime.onMessage.addListener(async function (request, sender, sendResponse) {
-    console.log(`getting message with action: ${request.action}`)
-    if (request.action != "replace_html") return;
+///////////////
 
-    console.log(`clearing content..`)
-    document.body.innerHTML = ''
+function OpLog_get_patches(bytes, op_runs) {
+    console.log(`op_runs = `, op_runs);
 
-    console.log(`content_type: ${request.content_type}`)
-    if (request.content_type === "text/plain") {
-        document.open();
-        document.write(`
-        <script src="${chrome.runtime.getURL('braid-http-client.js')}"></script>
-        <body
-            style="padding: 0px; margin: 0px; width: calc(100vw); height: calc(100vh - 5px); box-sizing: border-box;"
-        >
-            <span id="online" style="position: absolute; top: 5px; right: 5px;">•</span>
-            <textarea
-            id="texty"
-            style="width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box;"
-            autofocus
-            readonly
-            disabled
-            ></textarea>
-        </body>
-        `);
-        document.close();
-        await inject()
-    } else if (request.content_type === "application/json") {
-        document.open();
-        document.write(`
-        <script src="${chrome.runtime.getURL('braid-http-client.js')}"></script>
-        <script src="${chrome.runtime.getURL('apply-patch.js')}"></script>
-        <body
-            style="padding: 0px; margin: 0px; width: calc(100vw); height: calc(100vh - 5px); box-sizing: border-box;"
-        >
-            <span id="online" style="position: absolute; top: 5px; right: 5px;">•</span>
-            <textarea
-            id="texty"
-            style="width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box;"
-            autofocus
-            readonly
-            placeholder="JSON!"
-            ></textarea>
-        </body>
-        `);
-        document.close();
+    let [agents, versions, parentss] = parseDT([...bytes]);
 
-       window.onload = () => inject_json()
-    }
-});
+    // console.log(JSON.stringify({ agents, versions, parentss }, null, 4))
 
-async function inject() {
-    let enter_error_state = (why) => {
-        console.log(`enter_error_state because: ${why}`)
-        textarea.style.background = 'pink'
-        textarea.style.color = '#800'
-        textarea.disabled = true
-    }
-    window.errorify = (msg) => {
-        enter_error_state(msg)
-        throw new Error(msg)
-    }
-
-    var braid = {fetch: braid_fetch}
-
-    chrome.runtime.sendMessage({ action: "reload" });
-
-    let on_bytes_received = s => {
-        console.log(`on_bytes_received[${s.slice(0, 500)}]`)
-        chrome.runtime.sendMessage({ action: "braid_in", data: s });
-    }
-
-    let on_bytes_going_out = (params, url) => {
-        console.log(`on_bytes_going_out[${constructHTTPRequest(params, url)}]`)
-        chrome.runtime.sendMessage({ action: "braid_out", data: constructHTTPRequest(params, url) });
-    }
-
-    function constructHTTPRequest(params, url) {
-        let httpRequest = `${params.method ?? 'GET'} ${url}\r\n`;
-        for (var pair of params.headers.entries()) {
-            httpRequest += `${pair[0]}: ${pair[1]}\r\n`;
-        }
-        httpRequest += '\r\n';
-        if (['POST', 'PATCH', 'PUT'].includes(params.method?.toUpperCase()) && params.body) {
-            httpRequest += params.body;
-        }
-        return httpRequest;
-    }
-
-    let response = await fetch(chrome.runtime.getURL('dt_bg.wasm'))
-    let wasmModuleBuffer = await response.arrayBuffer();
-
-    const imports = __wbg_get_imports();
-    __wbg_init_memory(imports);
-
-    const module = await WebAssembly.compile(wasmModuleBuffer);
-    const instance = await WebAssembly.instantiate(module, imports);
-
-    __wbg_finalize_init(instance, module);
-
-    let last_text = "";
-
-    let sent_count = 0;
-    let ack_count = 0;
-
-    let textarea = document.querySelector("#texty");
-
-    let oplog = new OpLog(peer);
-
-    textarea.addEventListener("input", async () => {
-        let commonStart = 0;
-        while (
-            commonStart < Math.min(last_text.length, textarea.value.length) &&
-            last_text[commonStart] == textarea.value[commonStart]
-        ) {
-            commonStart++;
-        }
-
-        let commonEnd = 0;
-        while (
-            commonEnd <
-            Math.min(
-                last_text.length - commonStart,
-                textarea.value.length - commonStart
-            ) &&
-            last_text[last_text.length - commonEnd - 1] ==
-            textarea.value[textarea.value.length - commonEnd - 1]
-        ) {
-            commonEnd++;
-        }
-
-        let splicePos = commonStart;
-        let numToDelete = last_text.length - commonStart - commonEnd;
-        let stuffToInsert = textarea.value.slice(
-            commonStart,
-            textarea.value.length - commonEnd
-        );
-
-        last_text = textarea.value;
-
-        let v = oplog.getLocalVersion();
-        oplog.del(splicePos, numToDelete);
-        oplog.ins(splicePos, stuffToInsert);
-
-        for (let p of OpLog_get_patches(
-            oplog.getPatchSince(v),
-            oplog.getOpsSince(v)
-        )) {
-            //   console.log(JSON.stringify(p));
-
-            p.version = decode_version(p.version)
-            if (p.end - p.start < 1) throw 'unexpected patch with nothing'
-            p.version[1] += p.end - p.start - 1
-            p.version = p.version.join('-')
-
-            sent_count++;
-            texty.style.caretColor = 'orange'
-            console.log(`s counts: ${ack_count}/${sent_count}`);
-
-            let maxWait = 3000; // 3 seconds
-            let waitTime = 100;
-
-            const fetchWithRetry = async (url, options) => {
-                while (true) {
-                    try {
-                        let x = await braid.fetch(url, { ...options }, on_bytes_received, on_bytes_going_out)
-                        if (x.status !== 200) throw 'status not 200: ' + x.status
-
-                        let got = await x.text();
-                        if (got == "ok!") {
-                            ack_count++;
-
-                            if (ack_count == sent_count) {
-                                texty.style.caretColor = 'auto'
-                            }
-                        } else {
-                            console.log(`bad 200: ${got}`);
-                        }
-
-                        console.log(`a counts: ${ack_count}/${sent_count}`);
-                        break;
-                    } catch (e) {
-                        console.log(`got BAD!: ${e}`);
-
-                        waitTime *= 2;
-                        if (waitTime > maxWait) {
-                            waitTime = maxWait;
-                        }
-
-                        console.log(`Retrying in ${waitTime / 1000} seconds...`);
-
-                        await new Promise(done => setTimeout(done, waitTime))
-                    }
-                }
-            };
-
-            let ops = {
-                method: "PUT",
-                mode: "cors",
-                version: p.version,
-                parents: p.parents,
-                patches: [
-                    {
-                        unit: p.unit,
-                        range: p.range,
-                        content: p.content,
-                    },
-                ],
-            };
-            fetchWithRetry(window.location.href, ops);
-        }
-    });
-
-    window.subscription_online = false
-    function set_subscription_online (bool) {
-        if (subscription_online === bool) return
-        subscription_online = bool
-        console.log(bool ? 'Connected!' : 'Disconnected.')
-        var online = document.querySelector("#online").style
-        online.color = bool ? 'lime' : 'orange';
-    }
-    async function connect() {
-        try {
-            (
-                await braid.fetch(window.location.href,
-                                  {
-                                      subscribe: true,
-                                      parents: oplog.getRemoteVersion().map(x => x.join('-')),
-                                      headers: {Accept: 'text/plain'}
-                                  },
-                                  (x) => {
-                                      on_bytes_received(x)
-                                      set_subscription_online(true)
-                                  },
-                                  on_bytes_going_out
-                                 )
-            ).subscribe(
-                ({ version, parents, body, patches }) => {
-                    // set_subscription_online(true)
-                    //   console.log(
-                    //     `v = ${JSON.stringify(
-                    //       { version, parents, body, patches },
-                    //       null,
-                    //       4
-                    //     )}`
-                    //   );
-
-                    // chrome.runtime.sendMessage({ action: "braid_in", data: { version, parents, body, patches } });
-
-                    if (textarea.hasAttribute("readonly")) {
-                        textarea.removeAttribute("readonly")
-                        textarea.removeAttribute('disabled')
-                        textarea.focus()
-                    }
-
-                    if (!patches) return;
-
-                    let v = oplog.getLocalVersion();
-
-                    try {
-                        let range = patches[0].range.match(/\d+/g).map((x) => parseInt(x));
-
-                        version = decode_version(version)
-                        version[1] -= (patches[0].content ? patches[0].content.length : range[1] - range[0]) - 1
-                        version = version.join('-')
-
-                        if (patches[0].content) {
-                            // insert
-                            let v = version
-                            let ps = parents
-                            for (let i = 0; i < patches[0].content.length; i++) {
-                                let c = patches[0].content[i]
-                                oplog.addFromBytes(
-                                    OpLog_create_bytes(
-                                        v,
-                                        ps,
-                                        range[0] + i,
-                                        c
-                                    )
-                                );
-                                ps = [v]
-                                v = decode_version(v)
-                                v = [v[0], v[1] + 1].join('-')
-                            }
-                        } else {
-                            // delete
-                            let v = version
-                            let ps = parents
-                            for (let i = range[0]; i < range[1]; i++) {
-                                oplog.addFromBytes(
-                                    OpLog_create_bytes(
-                                        v,
-                                        ps,
-                                        range[0],
-                                        null
-                                    )
-                                );
-                                ps = [v]
-                                v = decode_version(v)
-                                v = [v[0], v[1] + 1].join('-')
-                            }
-                        }
-                    } catch (e) {
-                        errorify(e)
-                    }
-                    let sel = [textarea.selectionStart, textarea.selectionEnd];
-
-                    if (textarea.value != last_text) {
-                        errorify("textarea out of sync somehow!")
-                    }
-
-                    // work here
-                    // console.log(`op log = ${JSON.stringify(oplog.getXFSince(v), null, 4)}`)
-
-                    let [new_text, new_sel] = applyChanges(
-                        textarea.value,
-                        sel,
-                        oplog.getXFSince(v)
-                    );
-
-                    textarea.value = last_text = new_text;
-                    textarea.selectionStart = new_sel[0];
-                    textarea.selectionEnd = new_sel[1];
-                },
-                (e) => {
-                    console.log(`e = ${e}`);
-                    set_subscription_online(false)
-                    setTimeout(connect, 1000);
-                }
-            );
-        } catch (e) {
-            console.log(`e = ${e}`);
-            set_subscription_online(false)
-            setTimeout(connect, 1000);
-        }
-    }
-    connect();
-
-    function applyChanges(original, sel, changes) {
-        for (var change of changes) {
-            switch (change.kind) {
-                case "Del":
-                    for (let i = 0; i < sel.length; i++) {
-                        if (sel[i] > change.start) {
-                            if (sel[i] > change.end) {
-                                sel[i] -= change.end - change.start;
-                            } else sel[i] = change.start;
-                        }
-                    }
-
-                    original =
-                        original.substring(0, change.start) +
-                        original.substring(change.end);
-                    break;
-                case "Ins":
-                    for (let i = 0; i < sel.length; i++) {
-                        if (sel[i] > change.start) {
-                            sel[i] += change.content.length;
-                        }
-                    }
-
-                    original =
-                        original.substring(0, change.start) +
-                        change.content +
-                        original.substring(change.start);
-                    break;
-                default:
-                    errorify(`Unsupported change kind: ${change.kind}`)
-            }
-        }
-        return [original, sel];
-    }
-
-    function OpLog_get_patches(bytes, op_runs) {
-        console.log(`op_runs = `, op_runs);
-
-        let [agents, versions, parentss] = parseDT([...bytes]);
-
-        // console.log(JSON.stringify({ agents, versions, parentss }, null, 4))
-
-        let i = 0;
-        let patches = [];
-        op_runs.forEach((op_run) => {
-            let version = versions[i].join('-')
-            let parents = parentss[i].map((x) => x.join('-'));
-            let start = op_run.start;
-            let end = start + 1;
-            let content = op_run.content?.[0];
-            let len = op_run.end - op_run.start;
-            for (let j = 1; j <= len; j++) {
-                let I = i + j;
-                if (
-                    j == len ||
+    let i = 0;
+    let patches = [];
+    op_runs.forEach((op_run) => {
+        let version = versions[i].join('-')
+        let parents = parentss[i].map((x) => x.join('-'))
+        let start = op_run.start
+        let end = start + 1
+        let content = op_run.content?.[0]
+        let len = op_run.end - op_run.start
+        for (let j = 1; j <= len; j++) {
+            let I = i + j
+            if (
+                j == len ||
                     parentss[I].length != 1 ||
                     parentss[I][0][0] != versions[I - 1][0] ||
                     parentss[I][0][1] != versions[I - 1][1] ||
                     versions[I][0] != versions[I - 1][0] ||
                     versions[I][1] != versions[I - 1][1] + 1
-                ) {
-                    patches.push({
-                        version,
-                        parents,
-                        unit: "text",
-                        range: content ? `[${start}:${start}]` : `[${start}:${end}]`,
-                        content: content ?? "",
-                        start,
-                        end
-                    });
-                    if (j == len) break;
-                    version = versions[I].join('-');
-                    parents = parentss[I].map((x) => x.join('-'));
-                    start = op_run.start + j;
-                    content = "";
-                }
-                end++;
-                if (op_run.content) content += op_run.content[j];
+            ) {
+                patches.push({
+                    version,
+                    parents,
+                    unit: "text",
+                    range: content ? `[${start}:${start}]` : `[${start}:${end}]`,
+                    content: content ?? "",
+                    start,
+                    end
+                })
+                if (j == len) break
+                version = versions[I].join('-')
+                parents = parentss[I].map((x) => x.join('-'))
+                start = op_run.start + j
+                content = ""
             }
-            i += len;
-        });
-        return patches;
+            end++
+            if (op_run.content) content += op_run.content[j]
+        }
+        i += len
+    })
+    return patches
 
-        function parseDT(byte_array) {
-            if (
-                new TextDecoder().decode(new Uint8Array(byte_array.splice(0, 8))) !==
+    function parseDT(byte_array) {
+        if (
+            new TextDecoder().decode(new Uint8Array(byte_array.splice(0, 8))) !==
                 "DMNDTYPS"
-            )
-                errorify("dt parse error, expected DMNDTYPS");
+        )
+            errorify("dt parse error, expected DMNDTYPS");
 
-            if (byte_array.shift() != 0)
-                errorify("dt parse error, expected version 0");
+        if (byte_array.shift() != 0)
+            errorify("dt parse error, expected version 0");
 
-            let agents = [];
-            let versions = [];
-            let parentss = [];
+        let agents = [];
+        let versions = [];
+        let parentss = [];
 
-            while (byte_array.length) {
-                let id = byte_array.shift();
-                let len = read_varint(byte_array);
-                if (id == 1) {
-                } else if (id == 3) {
-                    let goal = byte_array.length - len;
-                    while (byte_array.length > goal) {
-                        agents.push(read_string(byte_array));
+        while (byte_array.length) {
+            let id = byte_array.shift();
+            let len = read_varint(byte_array);
+            if (id == 1) {
+            } else if (id == 3) {
+                let goal = byte_array.length - len;
+                while (byte_array.length > goal) {
+                    agents.push(read_string(byte_array));
+                }
+            } else if (id == 20) {
+            } else if (id == 21) {
+                let seqs = {};
+                let goal = byte_array.length - len;
+                while (byte_array.length > goal) {
+                    let part0 = read_varint(byte_array);
+                    let has_jump = part0 & 1;
+                    let agent_i = (part0 >> 1) - 1;
+                    let run_length = read_varint(byte_array);
+                    let jump = 0;
+                    if (has_jump) {
+                        let part2 = read_varint(byte_array);
+                        jump = part2 >> 1;
+                        if (part2 & 1) jump *= -1;
                     }
-                } else if (id == 20) {
-                } else if (id == 21) {
-                    let seqs = {};
-                    let goal = byte_array.length - len;
-                    while (byte_array.length > goal) {
-                        let part0 = read_varint(byte_array);
-                        let has_jump = part0 & 1;
-                        let agent_i = (part0 >> 1) - 1;
-                        let run_length = read_varint(byte_array);
-                        let jump = 0;
-                        if (has_jump) {
-                            let part2 = read_varint(byte_array);
-                            jump = part2 >> 1;
-                            if (part2 & 1) jump *= -1;
-                        }
-                        let base = (seqs[agent_i] || 0) + jump;
+                    let base = (seqs[agent_i] || 0) + jump;
 
-                        for (let i = 0; i < run_length; i++) {
-                            versions.push([agents[agent_i], base + i]);
-                        }
-                        seqs[agent_i] = base + run_length;
+                    for (let i = 0; i < run_length; i++) {
+                        versions.push([agents[agent_i], base + i]);
                     }
-                } else if (id == 23) {
-                    let count = 0;
-                    let goal = byte_array.length - len;
-                    while (byte_array.length > goal) {
-                        let run_len = read_varint(byte_array);
+                    seqs[agent_i] = base + run_length;
+                }
+            } else if (id == 23) {
+                let count = 0;
+                let goal = byte_array.length - len;
+                while (byte_array.length > goal) {
+                    let run_len = read_varint(byte_array);
 
-                        let parents = [];
-                        let has_more = 1;
-                        while (has_more) {
-                            let x = read_varint(byte_array);
-                            let is_foreign = 0x1 & x;
-                            has_more = 0x2 & x;
-                            let num = x >> 2;
+                    let parents = [];
+                    let has_more = 1;
+                    while (has_more) {
+                        let x = read_varint(byte_array);
+                        let is_foreign = 0x1 & x;
+                        has_more = 0x2 & x;
+                        let num = x >> 2;
 
-                            if (x == 1) {
-                                parents.push(["root"]);
-                            } else if (!is_foreign) {
-                                parents.push(versions[count - num]);
-                            } else {
-                                parents.push([agents[num - 1], read_varint(byte_array)]);
-                            }
+                        if (x == 1) {
+                            parents.push(["root"]);
+                        } else if (!is_foreign) {
+                            parents.push(versions[count - num]);
+                        } else {
+                            parents.push([agents[num - 1], read_varint(byte_array)]);
                         }
-                        parentss.push(parents);
+                    }
+                    parentss.push(parents);
+                    count++;
+
+                    for (let i = 0; i < run_len - 1; i++) {
+                        parentss.push([versions[count - 1]]);
                         count++;
-
-                        for (let i = 0; i < run_len - 1; i++) {
-                            parentss.push([versions[count - 1]]);
-                            count++;
-                        }
                     }
-                } else {
-                    byte_array.splice(0, len);
                 }
+            } else {
+                byte_array.splice(0, len);
             }
+        }
 
-            function read_string(byte_array) {
-                return new TextDecoder().decode(
-                    new Uint8Array(byte_array.splice(0, read_varint(byte_array)))
-                );
+        function read_string(byte_array) {
+            return new TextDecoder().decode(
+                new Uint8Array(byte_array.splice(0, read_varint(byte_array)))
+            );
+        }
+
+        function read_varint(byte_array) {
+            let result = 0;
+            let shift = 0;
+            while (true) {
+                if (byte_array.length === 0)
+                    errorify("byte array does not contain varint");
+
+                let byte_val = byte_array.shift();
+                result |= (byte_val & 0x7f) << shift;
+                if ((byte_val & 0x80) == 0) return result;
+                shift += 7;
             }
-
-            function read_varint(byte_array) {
-                let result = 0;
-                let shift = 0;
-                while (true) {
-                    if (byte_array.length === 0)
-                        errorify("byte array does not contain varint");
-
-                    let byte_val = byte_array.shift();
-                    result |= (byte_val & 0x7f) << shift;
-                    if ((byte_val & 0x80) == 0) return result;
-                    shift += 7;
-                }
-            }
-
-            return [agents, versions, parentss];
-        }
-    }
-
-    function OpLog_create_bytes(version, parents, pos, ins) {
-        //   console.log(
-        //     `args = ${JSON.stringify({ version, parents, pos, del, ins }, null, 4)}`
-        //   );
-
-        function write_varint(bytes, value) {
-            while (value >= 0x80) {
-                bytes.push((value & 0x7f) | 0x80);
-                value >>= 7;
-            }
-            bytes.push(value);
         }
 
-        function write_string(byte_array, str) {
-            let str_bytes = new TextEncoder().encode(str);
-            write_varint(byte_array, str_bytes.length);
-            byte_array.push(...str_bytes);
-        }
-
-        version = decode_version(version);
-        parents = parents.map(decode_version);
-
-        let bytes = [];
-        bytes = bytes.concat(Array.from(new TextEncoder().encode("DMNDTYPS")));
-        bytes.push(0);
-
-        let file_info = [];
-        let agent_names = [];
-
-        let agents = new Set();
-        agents.add(version[0]);
-        for (let p of parents) if (p.length > 1) agents.add(p[0]);
-        agents = [...agents];
-
-        //   console.log(JSON.stringify({ agents, parents }, null, 4));
-
-        let agent_to_i = {};
-        for (let [i, agent] of agents.entries()) {
-            agent_to_i[agent] = i;
-            write_string(agent_names, agent);
-        }
-
-        file_info.push(3);
-        write_varint(file_info, agent_names.length);
-        file_info.push(...agent_names);
-
-        bytes.push(1);
-        write_varint(bytes, file_info.length);
-        bytes.push(...file_info);
-
-        let branch = [];
-
-        if (parents[0].length > 1) {
-            let frontier = [];
-
-            for (let [i, [agent, seq]] of parents.entries()) {
-                let has_more = i < parents.length - 1;
-                let mapped = agent_to_i[agent];
-                let n = ((mapped + 1) << 1) | (has_more ? 1 : 0);
-                write_varint(frontier, n);
-                write_varint(frontier, seq);
-            }
-
-            branch.push(12);
-            write_varint(branch, frontier.length);
-            branch.push(...frontier);
-        }
-
-        bytes.push(10);
-        write_varint(bytes, branch.length);
-        bytes.push(...branch);
-
-        let patches = [];
-
-        if (ins) {
-            let inserted_content_bytes = [];
-
-            inserted_content_bytes.push(0); // ins (not del, which is 1)
-
-            inserted_content_bytes.push(13); // "content" enum (rather than compressed)
-            inserted_content_bytes.push(2); // length of content chunk
-            inserted_content_bytes.push(4); // "plain text" enum
-            inserted_content_bytes.push(ins.charCodeAt(0)); // actual text
-
-            inserted_content_bytes.push(25); // "known" enum
-            inserted_content_bytes.push(1); // length of "known" chunk
-            inserted_content_bytes.push(3); // content of length 1, and we "know" it
-
-            patches.push(24);
-            write_varint(patches, inserted_content_bytes.length);
-            patches.push(...inserted_content_bytes);
-        }
-
-        if (true) {
-            let version_bytes = [];
-
-            let [agent, seq] = version;
-            let agent_i = agent_to_i[agent];
-            let jump = seq;
-
-            write_varint(version_bytes, ((agent_i + 1) << 1) | (jump != 0 ? 1 : 0));
-            write_varint(version_bytes, 1);
-            if (jump) write_varint(version_bytes, jump << 1);
-
-            patches.push(21);
-            write_varint(patches, version_bytes.length);
-            patches.push(...version_bytes);
-        }
-
-        if (true) {
-            let op_bytes = [];
-
-            write_varint(op_bytes, (pos << 4) | (pos ? 2 : 0) | (ins ? 0 : 4));
-
-            patches.push(22);
-            write_varint(patches, op_bytes.length);
-            patches.push(...op_bytes);
-        }
-
-        if (true) {
-            let parents_bytes = [];
-
-            write_varint(parents_bytes, 1);
-
-            if (parents[0].length > 1) {
-                for (let [i, [agent, seq]] of parents.entries()) {
-                    let has_more = i < parents.length - 1;
-                    let agent_i = agent_to_i[agent];
-                    write_varint(
-                        parents_bytes,
-                        ((agent_i + 1) << 2) | (has_more ? 2 : 0) | 1
-                    );
-                    write_varint(parents_bytes, seq);
-                }
-            } else write_varint(parents_bytes, 1);
-
-            patches.push(23);
-            write_varint(patches, parents_bytes.length);
-            patches.push(...parents_bytes);
-        }
-
-        bytes.push(20);
-        write_varint(bytes, patches.length);
-        bytes.push(...patches);
-
-        //   console.log(bytes);
-
-        return bytes;
+        return [agents, versions, parentss];
     }
 }
 
-async function inject_json() {
-    let enter_error_state = (why) => {
-        console.log(`enter_error_state because: ${why}`)
-        textarea.style.background = 'pink'
-        textarea.style.color = '#800'
-        textarea.disabled = true
-    }
-    window.errorify = (msg) => {
-        enter_error_state(msg)
-        throw new Error(msg)
-    }
+function OpLog_create_bytes(version, parents, pos, ins) {
+    //   console.log(
+    //     `args = ${JSON.stringify({ version, parents, pos, del, ins }, null, 4)}`
+    //   )
 
-    var braid = {fetch: braid_fetch}
-
-    chrome.runtime.sendMessage({ action: "reload" });
-
-    let on_bytes_received = s => {
-        console.log(`on_bytes_received[${s.slice(0, 500)}]`)
-        chrome.runtime.sendMessage({ action: "braid_in", data: s });
-    }
-
-    let on_bytes_going_out = (params, url) => {
-        console.log(`on_bytes_going_out[${constructHTTPRequest(params, url)}]`)
-        chrome.runtime.sendMessage({ action: "braid_out", data: constructHTTPRequest(params, url) });
-    }
-
-    function constructHTTPRequest(params, url) {
-        let httpRequest = `${params.method ?? 'GET'} ${url}\r\n`;
-        for (var pair of params.headers.entries()) {
-            httpRequest += `${pair[0]}: ${pair[1]}\r\n`;
+    function write_varint(bytes, value) {
+        while (value >= 0x80) {
+            bytes.push((value & 0x7f) | 0x80)
+            value >>= 7
         }
-        httpRequest += '\r\n';
-        if (['POST', 'PATCH', 'PUT'].includes(params.method?.toUpperCase()) && params.body) {
-            httpRequest += params.body;
+        bytes.push(value)
+    }
+
+    function write_string(byte_array, str) {
+        let str_bytes = new TextEncoder().encode(str)
+        write_varint(byte_array, str_bytes.length)
+        byte_array.push(...str_bytes)
+    }
+
+    version = decode_version(version)
+    parents = parents.map(decode_version)
+
+    let bytes = []
+    bytes = bytes.concat(Array.from(new TextEncoder().encode("DMNDTYPS")))
+    bytes.push(0)
+
+    let file_info = []
+    let agent_names = []
+
+    let agents = new Set()
+    agents.add(version[0])
+    for (let p of parents) if (p.length > 1) agents.add(p[0])
+    agents = [...agents]
+
+    //   console.log(JSON.stringify({ agents, parents }, null, 4));
+
+    let agent_to_i = {};
+    for (let [i, agent] of agents.entries()) {
+        agent_to_i[agent] = i;
+        write_string(agent_names, agent);
+    }
+
+    file_info.push(3);
+    write_varint(file_info, agent_names.length);
+    file_info.push(...agent_names);
+
+    bytes.push(1);
+    write_varint(bytes, file_info.length);
+    bytes.push(...file_info);
+
+    let branch = [];
+
+    if (parents[0].length > 1) {
+        let frontier = [];
+
+        for (let [i, [agent, seq]] of parents.entries()) {
+            let has_more = i < parents.length - 1;
+            let mapped = agent_to_i[agent];
+            let n = ((mapped + 1) << 1) | (has_more ? 1 : 0);
+            write_varint(frontier, n);
+            write_varint(frontier, seq);
         }
-        return httpRequest;
+
+        branch.push(12);
+        write_varint(branch, frontier.length);
+        branch.push(...frontier);
     }
 
-    let doc = null;
+    bytes.push(10);
+    write_varint(bytes, branch.length);
+    bytes.push(...branch);
 
-    let sent_count = 0;
-    let ack_count = 0;
+    let patches = [];
 
-    let textarea = document.querySelector("#texty");
+    if (ins) {
+        let inserted_content_bytes = [];
 
-    window.subscription_online = false
-    function set_subscription_online (bool) {
-        if (subscription_online === bool) return
-        subscription_online = bool
-        console.log(bool ? 'Connected!' : 'Disconnected.')
-        var online = document.querySelector("#online").style
-        online.color = bool ? 'lime' : 'orange';
+        inserted_content_bytes.push(0); // ins (not del, which is 1)
+
+        inserted_content_bytes.push(13); // "content" enum (rather than compressed)
+        inserted_content_bytes.push(2); // length of content chunk
+        inserted_content_bytes.push(4); // "plain text" enum
+        inserted_content_bytes.push(ins.charCodeAt(0)); // actual text
+
+        inserted_content_bytes.push(25); // "known" enum
+        inserted_content_bytes.push(1); // length of "known" chunk
+        inserted_content_bytes.push(3); // content of length 1, and we "know" it
+
+        patches.push(24);
+        write_varint(patches, inserted_content_bytes.length);
+        patches.push(...inserted_content_bytes);
     }
-    async function connect() {
-        try {
-            (
-                await braid.fetch(window.location.href, {
-                    subscribe: true,
-                    headers: {Accept: 'application/json'}
-                }, on_bytes_received, on_bytes_going_out)
-            ).subscribe(
-                ({ version, parents, body, patches }) => {
-                    set_subscription_online(true)
-                      console.log(
-                        `v = ${JSON.stringify(
-                          { version, parents, body, patches },
-                          null,
-                          4
-                        )}`
-                      );
 
-                    try {
-                        if (body != null) {
-                            doc = JSON.parse(body)
-                        } else {
-                            doc = apply_patch(doc, patches[0].range, JSON.parse(patches[0].content))
-                        }
-                    } catch (e) {
-                        console.log(`eeee = ${e}`)
-                        console.log(`eeee = ${e.stack}`)
+    if (true) {
+        let version_bytes = [];
 
-                        doc = apply_patch(doc, patches[0].range, JSON.parse(patches[0].content))
+        let [agent, seq] = version;
+        let agent_i = agent_to_i[agent];
+        let jump = seq;
 
+        write_varint(version_bytes, ((agent_i + 1) << 1) | (jump != 0 ? 1 : 0));
+        write_varint(version_bytes, 1);
+        if (jump) write_varint(version_bytes, jump << 1);
 
-                        // location.reload()
-                    }
-                    textarea.value = JSON.stringify(doc)
-                },
-                (e) => {
-                    console.log(`e = ${e}`);
-                    set_subscription_online(false)
-                    setTimeout(connect, 1000);
-                }
-            );
-        } catch (e) {
-            console.log(`e = ${e}`);
-            set_subscription_online(false)
-            setTimeout(connect, 1000);
-        }
+        patches.push(21);
+        write_varint(patches, version_bytes.length);
+        patches.push(...version_bytes);
     }
-    connect();
+
+    if (true) {
+        let op_bytes = [];
+
+        write_varint(op_bytes, (pos << 4) | (pos ? 2 : 0) | (ins ? 0 : 4));
+
+        patches.push(22);
+        write_varint(patches, op_bytes.length);
+        patches.push(...op_bytes);
+    }
+
+    if (true) {
+        let parents_bytes = [];
+
+        write_varint(parents_bytes, 1);
+
+        if (parents[0].length > 1) {
+            for (let [i, [agent, seq]] of parents.entries()) {
+                let has_more = i < parents.length - 1;
+                let agent_i = agent_to_i[agent];
+                write_varint(
+                    parents_bytes,
+                    ((agent_i + 1) << 2) | (has_more ? 2 : 0) | 1
+                );
+                write_varint(parents_bytes, seq);
+            }
+        } else write_varint(parents_bytes, 1);
+
+        patches.push(23);
+        write_varint(patches, parents_bytes.length);
+        patches.push(...parents_bytes);
+    }
+
+    bytes.push(20);
+    write_varint(bytes, patches.length);
+    bytes.push(...patches);
+
+    //   console.log(bytes);
+
+    return bytes;
 }
 
 function decode_version(v) {

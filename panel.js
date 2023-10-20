@@ -16,10 +16,10 @@ window.onload = function () {
 
         const backgroundConnection = chrome.runtime.connect({
             name: "devtools-panel"
-        });
+        })
         backgroundConnection.onMessage.addListener((message) => {
             add_message(message)
-        });
+        })
     } catch (e) {
         add_message('eee:' + e.stack)
     }

@@ -48,7 +48,8 @@
         "<all_urls>"
       ],
       "js": [
-        "./content_script.js",
+        "./content-script.js",
+        "./dt.js",
         "./braid-http-client.js",
         "./apply-patch.js"
       ]

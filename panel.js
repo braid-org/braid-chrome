@@ -1,6 +1,14 @@
 
 window.onload = function () {
     try {
+        reload_button.style.border = '3px solid yellow'
+        reload_button.onclick = () => {
+            try {
+                chrome.runtime.sendMessage({ from: "dev", content_type: content_type_select.value });
+            } catch (e) {
+                alert(`e = ${e.stack}`)
+            }
+        }
         const backgroundConnection = chrome.runtime.connect({
             name: "devtools-panel"
         });

@@ -1191,6 +1191,9 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
     console.log(`getting message with action: ${request.action}`)
     if (request.action != "replace_html") return;
 
+    console.log(`clearing content..`)
+    document.body.innerHTML = ''
+
     console.log(`content_type: ${request.content_type}`)
     if (request.content_type === "text/plain") {
         document.open();
@@ -1926,9 +1929,21 @@ async function inject_json() {
                       );
 
                     try {
-                        doc = apply_patch(doc, patches[0].range, JSON.parse(patches[0].content))
+                        if (body != null) {
+                            doc = JSON.parse(body)
+                        } else {
+                            doc = apply_patch(doc, patches[0].range, JSON.parse(patches[0].content))
+                        }
                     } catch (e) {
-                        location.reload()
+                        console.log(`eeee = ${e}`)
+                        console.log(`eeee = ${e.stack}`)
+
+                        debugger
+
+                        doc = apply_patch(doc, patches[0].range, JSON.parse(patches[0].content))
+
+
+                        // location.reload()
                     }
                     textarea.value = JSON.stringify(doc)
                 },

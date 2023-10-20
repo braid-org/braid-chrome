@@ -3,8 +3,93 @@
   <head>
     <script src="panel.js"></script>
   </head>
-  <body style="margin: 0px;width:100vw;height: 100vh;background: rgb(32,33,36);color:rgb(190,195,200)">
-    <div id="id_left" style="position:absolute;left:0px;top:0px;width: 50%;bottom:0px;overflow: scroll;"></div>
-    <div id="id_right" style="position:absolute;right:0px;top:0px;width: 50%;bottom:0px;overflow: scroll;"></div>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+    }
+    button {
+      padding: 10px;
+      margin-top: 20px;
+    }
+  </style>
+  <body
+    style="
+      margin: 0px;
+      width: 100vw;
+      height: 100vh;
+      background: rgb(32, 33, 36);
+      color: rgb(190, 195, 200);
+    "
+  >
+    <div
+      id="id_left"
+      style="
+        position: absolute;
+        left: 0px;
+        top: 0px;
+        width: 50%;
+        bottom: 0px;
+        overflow: scroll;
+      "
+    ></div>
+    <div
+      id="id_right"
+      style="
+        position: absolute;
+        right: 0px;
+        top: 0px;
+        width: 50%;
+        bottom: 0px;
+        overflow: scroll;
+      "
+    ></div>
+    <div
+      id="id_yo"
+      style="
+        position: absolute;
+        right: 0px;
+        top: 0px;
+        width: 30%;
+        bottom: 0px;
+        overflow: scroll;
+        background: yellow;
+      "
+    >
+      <h2>Resource Options</h2>
+
+      <div>
+        <label for="content_type_select">Content-Type:</label>
+        <select id="content_type_select">
+          <option value="text/plain">Text</option>
+          <option value="text/html">HTML</option>
+          <option value="application/json">JSON</option>
+          <option value="text/markdown">Markdown</option>
+          <option value="application/javascript">Javascript</option>
+        </select>
+      </div>
+
+      <div>
+        <label for="merge-type">Merge-Type:</label>
+        <input type="text" id="merge-type" value="dt" />
+      </div>
+
+      <div>
+        <input type="checkbox" id="subscribe" checked />
+        <label for="subscribe">Subscribe:</label>
+      </div>
+
+      <div>
+        <label for="version">Version:</label>
+        <input type="text" id="version" />
+      </div>
+
+      <div>
+        <label for="parents">Parents:</label>
+        <input type="text" id="parents" />
+      </div>
+
+      <button id="reload_button">Reload</button>
+    </div>
   </body>
 </html>

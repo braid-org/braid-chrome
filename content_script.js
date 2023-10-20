@@ -1252,6 +1252,8 @@ async function inject() {
 
     var braid = {fetch: braid_fetch}
 
+    chrome.runtime.sendMessage({ action: "reload" });
+
     let on_bytes_received = s => {
         console.log(`on_bytes_received[${s.slice(0, 500)}]`)
         chrome.runtime.sendMessage({ action: "braid_in", data: s });
@@ -1874,6 +1876,8 @@ async function inject_json() {
     }
 
     var braid = {fetch: braid_fetch}
+
+    chrome.runtime.sendMessage({ action: "reload" });
 
     let on_bytes_received = s => {
         console.log(`on_bytes_received[${s.slice(0, 500)}]`)

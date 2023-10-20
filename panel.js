@@ -13,7 +13,7 @@ window.onload = function () {
 
         reload_button.onclick = tell_page_to_load_new_content_type
         content_type_select.onchange = tell_page_to_load_new_content_type
-        
+
         const backgroundConnection = chrome.runtime.connect({
             name: "devtools-panel"
         });
@@ -29,6 +29,11 @@ function add_message(message) {
     // Handle message from content script here
     //   console.log("Received message in devtools:", message);
 
+    if (message.action == 'reload') {
+        id_messages.innerHTML = ''
+        return
+    }
+
     let d = document.createElement('pre')
     d.textContent = message.data
     d.style.background = `rgb(41,42,45)`
@@ -36,11 +41,11 @@ function add_message(message) {
     d.style.margin = '3px'
     d.style.padding = '3px'
 
-    if (message.action == 'braid_out') {
-        id_left.append(d)
-    } else if (message.action == 'braid_in') {
-        id_right.append(d)
-    }
+    // if (message.action == 'braid_out') {
+        id_messages.append(d)
+    // } else if (message.action == 'braid_in') {
+    //     id_right.append(d)
+    // }
 }
 
 // POST undefined HTTP/1.1

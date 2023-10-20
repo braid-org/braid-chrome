@@ -63,9 +63,6 @@ chrome.runtime.onConnect.addListener((port) => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.from == 'dev') {
     chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
-
-      console.log('doing this at least..')
-
       chrome.tabs.sendMessage(tabs[0].id, { action: "replace_html", content_type: message.content_type });
     })
   } else {

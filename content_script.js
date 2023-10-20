@@ -1412,7 +1412,8 @@ async function inject() {
                 await braid.fetch(window.location.href,
                                   {
                                       subscribe: true,
-                                      parents: oplog.getRemoteVersion().map(x => x.join('-'))
+                                      parents: oplog.getRemoteVersion().map(x => x.join('-')),
+                                      headers: {Accept: 'text/plain'}
                                   },
                                   (x) => {
                                       on_bytes_received(x)
@@ -1915,7 +1916,8 @@ async function inject_json() {
         try {
             (
                 await braid.fetch(window.location.href, {
-                    subscribe: true
+                    subscribe: true,
+                    headers: {Accept: 'application/json'}
                 }, on_bytes_received, on_bytes_going_out)
             ).subscribe(
                 ({ version, parents, body, patches }) => {
@@ -1937,8 +1939,6 @@ async function inject_json() {
                     } catch (e) {
                         console.log(`eeee = ${e}`)
                         console.log(`eeee = ${e.stack}`)
-
-                        debugger
 
                         doc = apply_patch(doc, patches[0].range, JSON.parse(patches[0].content))
 

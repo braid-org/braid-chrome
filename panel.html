@@ -42,122 +42,75 @@
         overflow-y: clip;
       "
     >
+
+      <!-- Top Checkbox Row -->
       <div style="background-color: #FBFBFD; border-bottom: 1px solid #EEEFF8; padding: 5px;">
         <input type="checkbox" id="id_raw_messages" checked />
         <label for="id_raw_messages">Display Raw Messages</label>
       </div>
+
+      <!-- The Resource Metadata -->
+      <div id="metadata"
+           style="
+             position: absolute;
+             right: 10px;
+             top: 0px;
+             width: 50%;
+             max-width: 246px;
+             height: 157px;
+             background-color: #FBFBFD;
+             border-left: 1px solid #EEEFF8;
+             border-bottom: 1px solid #EEEFF8;
+             overflow-x: auto;
+             overflow-y: auto;
+             padding: 10px;
+           ">
+
+        <!-- 3 columns -->
+        <div style="
+             display: grid;
+             grid-template-columns: 1fr 90px 90px;
+             gap: 5px;
+             justify-items: left;" id="newmeta">
+
+          <h2></h2>
+          <h2>Request</h2>
+          <h2>Response</h2>
+
+          <label for="content_type_select" style='text-wrap:nowrap'>Content-Type:</label>
+          <select id="content_type_select">
+            <option value="text/plain">Text</option>
+            <option value="text/html">HTML</option>
+            <option value="application/json">JSON</option>
+            <option value="text/markdown">Markdown</option>
+            <option value="application/javascript">Javascript</option>
+          </select>
+          <span id="content_type_response">(fill this in...)</span>
+
+          <label for="subscribe_request">Subscribe:</label>
+          <input type="checkbox" id="subscribe_request" style="margin: 0;"/>
+          <span id="content_type_response">(fill this in...)</span>
+
+          <label for="version_request">Version:</label>
+          <input type="text" id="version_request" />
+          <span id="content_type_response">(fill this in...)</span>
+
+          <label for="parents_request">Parents:</label>
+          <input type="text" id="parents_request" />
+          <span id="content_type_response">(fill this in...)</span>
+
+          <span>Merge-Type:</span>
+          <span></span>
+          <span id="merge_type_response">(fill this in...)</span>
+
+          <button style="display: none" id="reload_button">Reload</button>
+        </div>
+      </div>
+
+      <!-- The messages go here -->
       <div style="width:100%; height: calc(100% - 30px); overflow-y: auto;" id="id_messages">
       </div>
     </div>
 
-    <!-- The Resource Metadata -->
-    <div id="metadata"
-         style="
-           position: absolute;
-           right: 10px;
-           top: 0px;
-           width: 50%;
-           max-width: 246px;
-           height: 150px;
-           background-color: #FBFBFD;
-           border-left: 1px solid #EEEFF8;
-           border-bottom: 1px solid #EEEFF8;
-           overflow-x: auto;
-           overflow-y: auto;
-           padding: 10px;
-         ">
-
-
-      <!-- Trying again, but with 3 columns this time -->
-      <div style="
-           display: grid;
-           grid-template-columns: 1fr 90px 90px;
-           gap: 5px;
-           justify-items: left;" id="newmeta">
-
-        <h2></h2>
-        <h2>Request</h2>
-        <h2>Response</h2>
-
-        <label for="content_type_select" style='text-wrap:nowrap'>Content-Type:</label>
-        <select id="content_type_select">
-          <option value="text/plain">Text</option>
-          <option value="text/html">HTML</option>
-          <option value="application/json">JSON</option>
-          <option value="text/markdown">Markdown</option>
-          <option value="application/javascript">Javascript</option>
-        </select>
-        <span id="content_type_response">(fill this in...)</span>
-
-        <label for="subscribe_request">Subscribe:</label>
-        <input type="checkbox" id="subscribe_request" style="margin: 0;"/>
-        <span id="content_type_response">(fill this in...)</span>
-
-        <label for="version_request">Version:</label>
-        <input type="text" id="version_request" />
-        <span id="content_type_response">(fill this in...)</span>
-
-        <label for="parents_request">Parents:</label>
-        <input type="text" id="parents_request" />
-        <span id="content_type_response">(fill this in...)</span>
-
-        <span>Merge-Type:</span>
-        <span></span>
-        <span id="merge_type_response">(fill this in...)</span>
-
-        <button style="display: none" id="reload_button">Reload</button>
-      </div>
-
-      <!--
-      <h2>Request</h2>
-
-      <div style="
-           display: grid;
-           grid-template-columns: 1fr 124px;
-           gap: 5px;
-           justify-items: left;">
-
-        <label for="content_type_select" style='text-wrap:nowrap'>Content-Type:</label>
-        <select id="content_type_select">
-          <option value="text/plain">Text</option>
-          <option value="text/html">HTML</option>
-          <option value="application/json">JSON</option>
-          <option value="text/markdown">Markdown</option>
-          <option value="application/javascript">Javascript</option>
-        </select>
-
-        <label for="subscribe_request">Subscribe:</label>
-        <input type="checkbox" id="subscribe_request" style="margin: 0;"/>
-
-        <label for="version_request">Version:</label>
-        <input type="text" id="version_request" />
-
-        <label for="parents_request">Parents:</label>
-        <input type="text" id="parents_request" />
-      </div>
-
-      <h2>Response</h2>
-
-      <div style="
-           display: grid;
-           grid-template-columns: 1fr 124px;
-           gap: 5px;">
-
-        <span>Content-Type:</span>
-        <span id="content_type_response">(fill this in...)</span>
-
-        <span>Subscribe:</span>
-        <span id="subscribe_response">(fill this in...)</span>
-
-        <span>Version:</span>
-        <span id="version_response">(fill this in...)</span>
-
-        <span>Parents:</span>
-        <span id="parents_response">(fill this in...)</span>
-
-        <span>Merge-Type:</span>
-        <span id="merge_type_response">(fill this in...)</span>
-      </div>
-    -->
   </body>
 </html>

@@ -15,7 +15,7 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
     document.write(`
       <script src="${chrome.runtime.getURL('braid-http-client.js')}"></script>
       <body
-          style="padding: 0px; margin: 0px; width: calc(100vw); height: 100vh; overflow-x: clip; box-sizing: border-box;"
+          style="padding: 0px; margin: 0px; width: 100vw; height: 100vh; overflow-x: clip; box-sizing: border-box;"
       >
           <span id="online" style="position: absolute; top: 5px; right: 5px;">•</span>
           <textarea
@@ -37,15 +37,15 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
       <script src="${chrome.runtime.getURL('braid-http-client.js')}"></script>
       <script src="${chrome.runtime.getURL('apply-patch.js')}"></script>
       <body
-          style="padding: 0px; margin: 0px; width: calc(100vw); height: calc(100vh - 5px); box-sizing: border-box;"
+          style="padding: 0px; margin: 0px; width: 100vw; height: 100vh; overflow-x: clip; box-sizing: border-box;"
       >
         <span id="online" style="position: absolute; top: 5px; right: 5px;">•</span>
-        <textarea
+        <code
           id="texty"
           style="width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box;"
           autofocus
           readonly
-        ></textarea>
+        ></code>
       </body>
       `)
     document.close()
@@ -382,7 +382,6 @@ async function inject_livejson() {
     console.log(`enter_error_state because: ${why}`)
     textarea.style.background = 'pink'
     textarea.style.color = '#800'
-    textarea.disabled = true
   }
   window.errorify = (msg) => {
     enter_error_state(msg)
@@ -462,7 +461,7 @@ async function inject_livejson() {
 
             // location.reload()
           }
-          textarea.value = JSON.stringify(doc)
+          textarea.innerText = JSON.stringify(doc)
         },
         (e) => {
           console.log(`e = ${e}`);

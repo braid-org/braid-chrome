@@ -40,6 +40,7 @@ function add_message(message) {
     d.style.borderRadius = '3px'
     d.style.margin = '3px'
     d.style.padding = '3px'
+    d.style.textWrap = 'wrap'
 
     // if (message.action == 'braid_out') {
         id_messages.append(d)

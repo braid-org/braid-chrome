@@ -8,7 +8,16 @@
     "storage",
     "scripting",
     "background",
-    "webRequest"
+    "webRequest",
+
+    // For adding headers to requests:
+    //  - The Feedback permission lets us track which patterns matched and
+    //    didn't with an API (see print_matched_rules() in service-worker)
+    //  - The HostAccess one gives permission for something about url matching
+    //    matters that we don't seem to need.
+    "declarativeNetRequest",
+    "declarativeNetRequestFeedback"
+    // "declarativeNetRequestWithHostAccess"
   ],
   "devtools_page": "devtools.html",
   "host_permissions": [
@@ -52,10 +61,21 @@
         "./dt.js",
         "./braid-http-client.js",
         "./apply-patch.js"
-      ]
+      ],
+      // run_at can be document_start, document_end, or document_idle (default)
+      "run_at": "document_start"
     }
   ],
   "background": {
     "service_worker": "service-worker.js"
+  },
+
+  "declarative_net_request": {
+    "rule_resources" : [{
+      "id": "add_subscribe_header",
+      "enabled": false,  // Disabled for now
+      "path": "add_subscribe_header.json"
+    }]
   }
+
 }

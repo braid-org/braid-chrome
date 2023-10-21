@@ -1,8 +1,33 @@
-console.log('YOYOYO2', 'background: #f00')
-
-chrome.webRequest.onCompleted.addListener(
+/*
+// Blocking webrequest listers are disabled in v3.
+// Gotta use the declarative_net_request stuff instead.
+chrome.webRequest.onBeforeSendHeaders.addListener(
   details => {
-    console.log('%c Request completeorcycle', 'background: #ff8')
+    console.log('Caught BEFORE SENDING HEADERS! details:', details)
+    details.requestHeaders.push({name: 'Subscribe', value: 'true'})
+    return {requestHeaders: details.requestHeaders}
+  },
+  {urls: ["<all_urls>"], types: ["main_frame"]},
+  ["requestHeaders", "blocking", "extraHeaders"]
+)*/
+
+chrome.webRequest.onSendHeaders.addListener(
+  details => {
+    console.log('Caught SENDING HEADERS!', details)
+    for (var i=0; i<details.requestHeaders.length; i++)
+      if (details.requestHeaders[i].name.toLowerCase() === 'subscribe')
+        console.log('%cSubscribe header set!', 'background: #fdd',
+                    'Subscribe:', details.requestHeaders[i].value)
+    // details.requestHeaders.push({name: 'Subscribe', value: 'true'})
+    // return {requestHeaders: details.requestHeaders}
+  },
+  {urls: ["<all_urls>"], types: ["main_frame"]},
+  ["requestHeaders"]
+)
+
+chrome.webRequest.onHeadersReceived.addListener(
+  details => {
+    console.log('%cHeaders received!', 'background: #ff8', details)
 
     // Skip responses that don't accept subscriptions
     if (!details.responseHeaders
@@ -12,19 +37,22 @@ chrome.webRequest.onCompleted.addListener(
     console.log('Server accepts subscription!')
 
     // Remember the content type
-    var contentType = details.responseHeaders
+    var content_type = details.responseHeaders
         .find(header => header.name.toLowerCase() === 'content-type')
-    console.log('Content Type:', contentType)
 
-    chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
-      console.log('gonna try22.2..')
+    console.log('Content Type:', content_type)
 
+    // Now wait until the tab has loaded, and activate the page replacement
+    if (true)
       // Listen for any changes on the active tab
       chrome.tabs.onUpdated.addListener(function callback(tabId, info, tab) {
-        // Check if tab update status is 'complete' and the updated tab is the current active tab
-        if (info.status === 'complete' && tabId === tabs[0].id) {
-          chrome.tabs.sendMessage(tabs[0].id,
-                                  {action: "replace_html", content_type: contentType.value})
+        // Check if tab update status is 'complete' and the updated tab is the
+        // current active tab
+        if (info.status === 'complete' && tabId === details.tabId) {
+          chrome.tabs.sendMessage(
+            details.tabId,
+            {action: "replace_html",content_type: content_type.value}
+          )
 
           // Remove the listener after we're done
           chrome.tabs.onUpdated.removeListener(callback)
@@ -32,23 +60,55 @@ chrome.webRequest.onCompleted.addListener(
       })
 
 
-      // chrome.tabs.sendMessage(tabs[0].id, { action: "replace_html" });
-      // chrome.tabs.executeScript(tabs[0].id, { file: "popup.js" }, function () {
-      // setTimeout(() => {
-      //     console.log(`tabs[${tabs.length}]`, tabs)
-      //     chrome.tabs.sendMessage(tabs[0].id, { action: "replace_html" });
-      // }, 1000)
-      // });
+    // // These are mike's failed experiments to make loading faster
+    // if (false)
+    //   chrome.scripting.executeScript({
+    //     target: {tabId: details.tabId},
+    //     files: ["./content-script.js",
+    //             "./dt.js",
+    //             "./braid-http-client.js",
+    //             "./apply-patch.js"
+    //            ]
+    //   }, injection_results => {
+    //     if (chrome.runtime.lastError) {
+    //       console.error(JSON.stringify(chrome.runtime.lastError))
+    //     } else {
+    //       // Content script has been injected.
+    //       // Send a message or perform other actions.
+    //       chrome.tabs.sendMessage(
+    //         details.tabId,
+    //         {action: "replace_html",content_type: content_type.value}
+    //       )
+    //     }
+    //   })
 
-    })
+    // if (false)
+    //   chrome.tabs.executeScript(
+    //     details.tabId, {file: 'content-script.js'},
+    //     results => {
+    //       chrome.tabs.sendMessage(
+    //         details.tabId,
+    //         {action: "replace_html",content_type: content_type.value}
+    //       )
+    //     }
+    //   )
+
   },
   { urls: ["<all_urls>"], types: ["main_frame"] },
   ["responseHeaders"]
 )
 
-chrome.webRequest.onResponseStarted.addListener(details => {
-  console.log('Yo! we see a request', 'background: #0f0')
-}, { urls: ['<all_urls>'] }, ["extraHeaders", 'responseHeaders'])
+// chrome.webRequest.onResponseStarted.addListener(details => {
+//   console.log('%cYo! we see a response starting', 'background: #0f0', details)
+// }, { urls: ['<all_urls>'] }, ["extraHeaders", 'responseHeaders'])
+
+// Just for debugging, this function prints out which rules have been matched.
+function print_matched_rules () {
+    chrome.declarativeNetRequest.getMatchedRules({}, (rules) => {
+        console.log(rules)
+    })
+}
+
 
 let devToolsConnection
 
@@ -78,3 +138,5 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
   }
 })
+
+console.log('%cService Worker Loaded', 'background: #ddf')

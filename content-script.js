@@ -1,14 +1,3 @@
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-
-
 // This replaces the page with our "live-update" view of TEXT or JSON
 chrome.runtime.onMessage.addListener(async function (request, sender, sendResponse) {
     console.log(`getting message with action: ${request.action}`)
@@ -17,6 +6,7 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
     if (request.action !== "replace_html") return
 
     console.log(`clearing content, to replace with live updating ${request.content_type}`)
+
     document.body.innerHTML = ''
 
     // Text version
@@ -64,6 +54,20 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
        window.onload = () => inject_livejson()
     }
 })
+
+function wipe_page (mime_type) {
+    // None of this works very well
+
+    // window.stop()
+
+    // var curr_url = window.location.href,
+    //     blob = new Blob([''], {type: mime_type})
+
+    // // Change the page to the blob URL
+    // window.location.replace(URL.createObjectURL(blob))
+    // // And pretend that it hasn't changed
+    // history.replaceState(null, null, curr_url)
+}
 
 async function inject_livetext() {
     let enter_error_state = (why) => {

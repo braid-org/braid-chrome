@@ -15,7 +15,7 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
     document.write(`
       <script src="${chrome.runtime.getURL('braid-http-client.js')}"></script>
       <body
-          style="padding: 0px; margin: 0px; width: calc(100vw); height: calc(100vh - 5px); box-sizing: border-box;"
+          style="padding: 0px; margin: 0px; width: calc(100vw); height: 100vh; overflow-x: clip; box-sizing: border-box;"
       >
           <span id="online" style="position: absolute; top: 5px; right: 5px;">•</span>
           <textarea

@@ -45,7 +45,6 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
           style="width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box;"
           autofocus
           readonly
-          placeholder="JSON!"
         ></textarea>
       </body>
       `)
@@ -480,3 +479,7 @@ async function inject_livejson() {
   connect();
 }
 
+
+// // Open devtools to braid when hotkey is pressedn
+// chrome.runtime.onMessage.addListener((message, sender, send_response) => {
+//   if (message.action === 'openBraidPanel') 

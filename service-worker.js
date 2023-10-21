@@ -113,4 +113,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 })
 
+// chrome.commands.onCommand.addListener(command => {
+//   if (command === "_execute_browser_action") {
+//     chrome.tabs.query({active: true, currentWindow: true}, tabs => {
+//       var tab = tabs[0]
+//       chrome.tabs.sendMessage(tab.id, {action: "openBraidPanel"})
+//     })
+//   }
+// })
+
 console.log('%cService Worker Loaded', 'background: #ddf')

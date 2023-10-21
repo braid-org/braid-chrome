@@ -69,7 +69,15 @@
   "background": {
     "service_worker": "service-worker.js"
   },
-
+  // "commands": {
+  //   "_execute_browser_action": {
+  //     "suggested_key": {
+  //       "default": "Ctrl+Shift+B",
+  //       "mac": "MacCtrl+Shift+B"
+  //     },
+  //     "description": "Open Braid Devtools"
+  //   }
+  // },
   "declarative_net_request": {
     "rule_resources" : [{
       "id": "add_subscribe_header",

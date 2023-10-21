@@ -37,12 +37,12 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
       <script src="${chrome.runtime.getURL('braid-http-client.js')}"></script>
       <script src="${chrome.runtime.getURL('apply-patch.js')}"></script>
       <body
-          style="padding: 0px; margin: 0px; width: 100vw; height: 100vh; overflow-x: clip; box-sizing: border-box;"
+          style="width: 100vw; height: 100vh; overflow-x: clip; box-sizing: border-box;"
       >
         <span id="online" style="position: absolute; top: 5px; right: 5px;">•</span>
         <code
           id="texty"
-          style="width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box;"
+          style="width: 100%; height:100%; font-size: 13px;"
           autofocus
           readonly
         ></code>

@@ -12,6 +12,7 @@
       padding: 10px;
       margin-top: 20px;
     }
+    h2 {font-size: 13px;}
   </style>
   <body
     style="
@@ -49,9 +50,13 @@
         border-left: 1px solid #EEEFF8;
       "
     >
-      <h2>Metadata</h2>
+      <h2>Request</h2>
 
-      <div>
+      <div style="
+           display: grid;
+           grid-template-columns: 1fr 124px;
+           gap: 5px;">
+
         <label for="content_type_select">Content-Type:</label>
         <select id="content_type_select">
           <option value="text/plain">Text</option>
@@ -60,7 +65,18 @@
           <option value="text/markdown">Markdown</option>
           <option value="application/javascript">Javascript</option>
         </select>
+
+        <label for="subscribe">Subscribe:</label>
+        <input type="checkbox" id="subscribe" checked />
+
+        <label for="version">Version:</label>
+        <input type="text" id="version" />
+
+        <label for="parents">Parents:</label>
+        <input type="text" id="parents" />
       </div>
+
+      <h2>Response</h2>
 
       <div style="display: none">
       <div>
@@ -69,8 +85,8 @@
       </div>
 
       <div>
-        <input type="checkbox" id="subscribe" checked />
         <label for="subscribe">Subscribe:</label>
+        <input type="checkbox" id="subscribe" checked />
       </div>
 
       <div>

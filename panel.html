@@ -7,6 +7,7 @@
     body {
       font-family: Arial, sans-serif;
       padding: 20px;
+      overflow: clip;
     }
     input {
         padding: 0;
@@ -25,35 +26,41 @@
       height: 100vh;
     "
   >
-    <div
+
+    <!-- The Messages -->
+    <div id="messages"
       style="
         position: absolute;
         left: 0px;
         top: 0px;
         width: 70%;
         bottom: 0px;
+        overflow-x: clip;
+        overflow-y: clip;
       "
     >
       <div style="background-color: #FBFBFD; border-bottom: 1px solid #EEEFF8;">
         <input type="checkbox" id="id_raw_messages" checked />
         <label for="id_raw_messages">Display Raw Messages</label>
       </div>
-      <div style="width:100%;height: 100%;overflow: scroll;" id="id_messages">
+      <div style="width:100%;height: 100%;overflow-y: auto;" id="id_messages">
       </div>
     </div>
-    <div
-      id="id_yo"
-      style="
-        position: absolute;
-        right: 0px;
-        top: 0px;
-        width: 30%;
-        bottom: 0px;
-        overflow: scroll;
-        background-color: #FBFBFD;
-        border-left: 1px solid #EEEFF8;
-      "
-    >
+
+    <!-- The Resource Metadata -->
+    <div id="metadata"
+         style="
+           position: absolute;
+           right: 0px;
+           top: 0px;
+           width: 30%;
+           bottom: 0px;
+           overflow: scroll;
+           background-color: #FBFBFD;
+           border-left: 1px solid #EEEFF8;
+           overflow-x: clip;
+           overflow-y: scroll;
+         ">
       <h2>Request</h2>
 
       <div style="

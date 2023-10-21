@@ -33,7 +33,7 @@
         position: absolute;
         left: 0px;
         top: 0px;
-        width: 70%;
+        width: calc(70% + 15px);
         bottom: 0px;
         overflow-x: clip;
         overflow-y: clip;
@@ -43,7 +43,7 @@
         <input type="checkbox" id="id_raw_messages" checked />
         <label for="id_raw_messages">Display Raw Messages</label>
       </div>
-      <div style="width:100%;height: 100%; overflow-y: auto;" id="id_messages">
+      <div style="width:100%; height: calc(100% - 30px); overflow-y: auto;" id="id_messages">
       </div>
     </div>
 

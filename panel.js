@@ -36,7 +36,7 @@ function add_message(message) {
 
     let d = document.createElement('pre')
     d.textContent = message.data
-    d.style.background = `rgb(41,42,45)`
+    //d.style.background = `rgb(41,42,45)`
     d.style.borderRadius = '3px'
     d.style.margin = '3px'
     d.style.padding = '3px'

@@ -18,8 +18,6 @@
       margin: 0px;
       width: 100vw;
       height: 100vh;
-      background: rgb(32, 33, 36);
-      color: rgb(190, 195, 200);
     "
   >
     <div
@@ -31,9 +29,9 @@
         bottom: 0px;
       "
     >
-      <div>
+      <div style="background-color: #FBFBFD;">
         <input type="checkbox" id="id_raw_messages" checked />
-        <label for="id_raw_messages">Dislay Raw Messages</label>
+        <label for="id_raw_messages">Display Raw Messages</label>
       </div>
       <div style="width:100%;height: 100%;overflow: scroll;" id="id_messages">
       </div>
@@ -47,7 +45,8 @@
         width: 30%;
         bottom: 0px;
         overflow: scroll;
-        background: yellow;
+        background-color: #FBFBFD;
+        border-left: 1px solid #EEEFF8;
       "
     >
       <h2>Metadata</h2>
@@ -63,9 +62,10 @@
         </select>
       </div>
 
+      <div style="display: none">
       <div>
         <label for="merge-type">Merge-Type:</label>
-        <input type="text" id="merge-type" value="dt" />
+        <span type="text" id="merge-type"></span>
       </div>
 
       <div>
@@ -84,6 +84,7 @@
       </div>
 
       <button id="reload_button">Reload</button>
+      </div>
     </div>
   </body>
 </html>

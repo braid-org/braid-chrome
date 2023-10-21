@@ -461,7 +461,6 @@ async function inject_livejson() {
 
             doc = apply_patch(doc, patches[0].range, JSON.parse(patches[0].content))
 
-
             // location.reload()
           }
           textarea.value = JSON.stringify(doc)

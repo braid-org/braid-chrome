@@ -21,7 +21,6 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
           <textarea
           id="texty"
           style="width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box;"
-          autofocus
           readonly
           disabled
           ></textarea>
@@ -43,7 +42,6 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
         <code
           id="texty"
           style="width: 100%; height:100%; font-size: 13px;"
-          autofocus
           readonly
         ></code>
       </body>
@@ -226,113 +224,101 @@ async function inject_livetext() {
   }
   async function connect() {
     try {
-      (
-        await braid.fetch(window.location.href,
-                          {
-                            subscribe: true,
-                            parents: oplog.getRemoteVersion().map(x => x.join('-')),
-                            headers: {Accept: 'text/plain'}
-                          },
-                          (x) => {
-                            on_bytes_received(x)
-                            set_subscription_online(true)
-                          },
-                          on_bytes_going_out
-                         )
-      ).subscribe(
-        ({ version, parents, body, patches }) => {
-          // set_subscription_online(true)
-          //   console.log(
-          //     `v = ${JSON.stringify(
-          //       { version, parents, body, patches },
-          //       null,
-          //       4
-          //     )}`
-          //   );
+      var response = await braid.fetch(window.location.href,
+                                       {
+                                         subscribe: true,
+                                         parents: oplog.getRemoteVersion().map(x => x.join('-')),
+                                         headers: {Accept: 'text/plain'}
+                                       },
+                                       (x) => {
+                                         on_bytes_received(x)
+                                         set_subscription_online(true)
+                                       },
+                                       on_bytes_going_out)
+      response.subscribe(({ version, parents, body, patches }) => {
+        // chrome.runtime.sendMessage({ action: "braid_in", data: { version, parents, body, patches } });
 
-          // chrome.runtime.sendMessage({ action: "braid_in", data: { version, parents, body, patches } });
+        if (textarea.hasAttribute("readonly")) {
+          textarea.removeAttribute("readonly")
+          textarea.removeAttribute('disabled')
+          // textarea.focus()
+        }
 
-          if (textarea.hasAttribute("readonly")) {
-            textarea.removeAttribute("readonly")
-            textarea.removeAttribute('disabled')
-            textarea.focus()
-          }
+        if (!patches) return;
 
-          if (!patches) return;
+        let v = oplog.getLocalVersion();
 
-          let v = oplog.getLocalVersion();
+        try {
+          let range = patches[0].range.match(/\d+/g).map((x) => parseInt(x));
 
-          try {
-            let range = patches[0].range.match(/\d+/g).map((x) => parseInt(x));
+          version = decode_version(version)
+          version[1] -= (patches[0].content ? patches[0].content.length : range[1] - range[0]) - 1
+          version = version.join('-')
 
-            version = decode_version(version)
-            version[1] -= (patches[0].content ? patches[0].content.length : range[1] - range[0]) - 1
-            version = version.join('-')
-
-            if (patches[0].content) {
-              // insert
-              let v = version
-              let ps = parents
-              for (let i = 0; i < patches[0].content.length; i++) {
-                let c = patches[0].content[i]
-                oplog.addFromBytes(
-                  OpLog_create_bytes(
-                    v,
-                    ps,
-                    range[0] + i,
-                    c
-                  )
-                );
-                ps = [v]
-                v = decode_version(v)
-                v = [v[0], v[1] + 1].join('-')
-              }
-            } else {
-              // delete
-              let v = version
-              let ps = parents
-              for (let i = range[0]; i < range[1]; i++) {
-                oplog.addFromBytes(
-                  OpLog_create_bytes(
-                    v,
-                    ps,
-                    range[0],
-                    null
-                  )
-                );
-                ps = [v]
-                v = decode_version(v)
-                v = [v[0], v[1] + 1].join('-')
-              }
+          if (patches[0].content) {
+            // insert
+            let v = version
+            let ps = parents
+            for (let i = 0; i < patches[0].content.length; i++) {
+              let c = patches[0].content[i]
+              oplog.addFromBytes(
+                OpLog_create_bytes(
+                  v,
+                  ps,
+                  range[0] + i,
+                  c
+                )
+              );
+              ps = [v]
+              v = decode_version(v)
+              v = [v[0], v[1] + 1].join('-')
             }
-          } catch (e) {
-            errorify(e)
+          } else {
+            // delete
+            let v = version
+            let ps = parents
+            for (let i = range[0]; i < range[1]; i++) {
+              oplog.addFromBytes(
+                OpLog_create_bytes(
+                  v,
+                  ps,
+                  range[0],
+                  null
+                )
+              );
+              ps = [v]
+              v = decode_version(v)
+              v = [v[0], v[1] + 1].join('-')
+            }
           }
-          let sel = [textarea.selectionStart, textarea.selectionEnd];
+        } catch (e) {
+          errorify(e)
+        }
+        let sel = [textarea.selectionStart, textarea.selectionEnd];
 
-          if (textarea.value != last_text) {
-            errorify("textarea out of sync somehow!")
-          }
+        if (textarea.value != last_text) {
+          errorify("textarea out of sync somehow!")
+        }
 
-          // work here
-          // console.log(`op log = ${JSON.stringify(oplog.getXFSince(v), null, 4)}`)
+        // work here
+        // console.log(`op log = ${JSON.stringify(oplog.getXFSince(v), null, 4)}`)
 
-          let [new_text, new_sel] = applyChanges(
-            textarea.value,
-            sel,
-            oplog.getXFSince(v)
-          );
+        let [new_text, new_sel] = applyChanges(
+          textarea.value,
+          sel,
+          oplog.getXFSince(v)
+        );
 
-          textarea.value = last_text = new_text;
-          textarea.selectionStart = new_sel[0];
-          textarea.selectionEnd = new_sel[1];
-        },
+        textarea.value = last_text = new_text;
+        textarea.selectionStart = new_sel[0];
+        textarea.selectionEnd = new_sel[1];
+      },
         (e) => {
           console.log(`e = ${e}`);
           set_subscription_online(false)
           setTimeout(connect, 1000);
         }
-      );
+      )
     } catch (e) {
       console.log(`e = ${e}`);
       set_subscription_online(false)

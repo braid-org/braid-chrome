@@ -14,18 +14,18 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
 chrome.webRequest.onSendHeaders.addListener(
   details => {
     console.log('Caught SENDING HEADERS!', details)
-    for (var i=0; i<details.requestHeaders.length; i++)
+    for (var i = 0; i < details.requestHeaders.length; i++)
       if (details.requestHeaders[i].name.toLowerCase() === 'subscribe')
         console.log('%cSubscribe header set!', 'background: #fdd',
-                    'Subscribe:', details.requestHeaders[i].value)
+          'Subscribe:', details.requestHeaders[i].value)
     // details.requestHeaders.push({name: 'Subscribe', value: 'true'})
     // return {requestHeaders: details.requestHeaders}
   },
-  {urls: ["<all_urls>"], types: ["main_frame"]},
+  { urls: ["<all_urls>"], types: ["main_frame"] },
   ["requestHeaders"]
 )
 
-function tell_tab_to_go_live (tabid, content_type) {
+function tell_tab_to_go_live(tabid, content_type) {
   // Now wait until the tab has loaded, and activate the page replacement
   chrome.tabs.onUpdated.addListener(function callback(curr_tabid, info, tab) {
     // Check if tab update status is 'complete'
@@ -33,7 +33,7 @@ function tell_tab_to_go_live (tabid, content_type) {
       // Send the message to go live!
       chrome.tabs.sendMessage(
         tabid,
-        {action: "replace_html", content_type: content_type}
+        { action: "replace_html", content_type: content_type }
       )
 
       // Remove the listener after we're done
@@ -48,11 +48,11 @@ chrome.webRequest.onHeadersReceived.addListener(
     console.log('%cHeaders received!', 'background: #ff8', details)
 
     var content_type = details.responseHeaders
-        .find(header => header.name.toLowerCase() === 'content-type')?.value
+      .find(header => header.name.toLowerCase() === 'content-type')?.value
 
     // If the resource says it accepts subscriptions, let's go live!
     if (details.responseHeaders
-        .find(x => x.name.toLowerCase() === 'accept-subscribe')) {
+      .find(x => x.name.toLowerCase() === 'accept-subscribe')) {
 
       console.log('Server accepts subscription!')
       tell_tab_to_go_live(details.tabId, content_type)
@@ -77,39 +77,43 @@ chrome.webRequest.onHeadersReceived.addListener(
 // }, { urls: ['<all_urls>'] }, ["extraHeaders", 'responseHeaders'])
 
 // Just for debugging, this function prints out which rules have been matched.
-function print_matched_rules () {
-    chrome.declarativeNetRequest.getMatchedRules({}, (rules) => {
-        console.log(rules)
-    })
+function print_matched_rules() {
+  chrome.declarativeNetRequest.getMatchedRules({}, (rules) => {
+    console.log(rules)
+  })
 }
 
-
-let devToolsConnection
+let tab_to_dev = {}
 
 chrome.runtime.onConnect.addListener((port) => {
   console.log(`onConnect: `, port)
-  if (port.name === "devtools-panel") {
-    devToolsConnection = port
-    devToolsConnection.onDisconnect.addListener(() => {
-      devToolsConnection = null
+  if (port.name === "braid-devtools-panel") {
+    let tab_id = null
+    port.onMessage.addListener((message) => {
+      console.log(`Message from port:`, message);
+      if (message.cmd == 'init') {
+        tab_id = message.tab_id
+        tab_to_dev[tab_id] = port
+
+        chrome.tabs.sendMessage(
+          tab_id,
+          { action: "dev_panel_openned" })
+      } else if (message.cmd == 'reload') {
+        chrome.tabs.sendMessage(
+          tab_id,
+          { action: "replace_html", content_type: message.content_type })
+      }
+    });
+    port.onDisconnect.addListener(() => {
+      delete tab_to_dev[tab_id]
     })
   }
 })
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.from === 'dev') {
-    chrome.tabs.query(
-      {active: true, currentWindow: true},
-      tabs => {
-        chrome.tabs.sendMessage(
-          tabs[0].id,
-          {action: "replace_html", content_type: message.content_type})
-      })
-  } else {
-    if (devToolsConnection) {
-      console.log(`sending message: ${JSON.stringify(message)}`)
-      devToolsConnection.postMessage(message)
-    }
+  if (tab_to_dev[sender.tab.id]) {
+    console.log(`sending message: ${JSON.stringify(message)}`)
+    tab_to_dev[sender.tab.id].postMessage(message)
   }
 })
 

@@ -1,18 +1,52 @@
+
+var headers = {}
+var versions = []
+var raw_messages = []
+
+function enter_error_state(why) {
+  console.log(`enter_error_state because: ${why}`)
+  textarea.style.background = 'pink'
+  textarea.style.color = '#800'
+  textarea.disabled = true
+}
+window.errorify = (msg) => {
+  enter_error_state(msg)
+  throw new Error(msg)
+}
+
+function on_bytes_received(s) {
+  console.log(`on_bytes_received[${s.slice(0, 500)}]`)
+  raw_messages.push(s)
+  chrome.runtime.sendMessage({ action: "braid_in", data: s })
+}
+
+function on_bytes_going_out(params, url) {
+  let data = constructHTTPRequest(params, url)
+  console.log(`on_bytes_going_out[${data}]`)
+  raw_messages.push(data)
+  chrome.runtime.sendMessage({ action: "braid_out", data })
+}
+
 // This replaces the page with our "live-update" view of TEXT or JSON
 chrome.runtime.onMessage.addListener(async function (request, sender, sendResponse) {
   console.log(`getting message with action: ${request.action}`)
+  if (request.action == 'dev_panel_openned') {
+    chrome.runtime.sendMessage({ action: "init", headers, versions, raw_messages })
 
-  // We only listen to ONE action, which is called "replace_html"
-  if (request.action !== "replace_html") return
+  } else if (request.action == "replace_html") {
+    console.log(`clearing content, to replace with live updating ${request.content_type}`)
 
-  console.log(`clearing content, to replace with live updating ${request.content_type}`)
+    headers = {}
+    versions = []
+    raw_messages = []
+    chrome.runtime.sendMessage({ action: "init", versions, raw_messages, headers })
 
-  document.body.innerHTML = ''
+    document.body.innerHTML = ''
 
-  // Text version
-  if (request.content_type === "text/plain") {
-    document.open()
-    document.write(`
+    // Text version
+    if (request.content_type === "text/plain") {
+      document.open()
+      document.write(`
       <script src="${chrome.runtime.getURL('braid-http-client.js')}"></script>
       <body
           style="padding: 0px; margin: 0px; width: 100vw; height: 100vh; overflow-x: clip; box-sizing: border-box;"
@@ -26,13 +60,15 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
           ></textarea>
       </body>
       `);
-    document.close()
-    await inject_livetext()
+      document.close()
 
-    // JSON version
-  } else if (request.content_type === "application/json") {
-    document.open()
-    document.write(`
+      window.braid = { fetch: braid_fetch }
+      await inject_livetext()
+
+      // JSON version
+    } else if (request.content_type === "application/json") {
+      document.open()
+      document.write(`
       <script src="${chrome.runtime.getURL('braid-http-client.js')}"></script>
       <script src="${chrome.runtime.getURL('apply-patch.js')}"></script>
       <body
@@ -46,50 +82,15 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
         ></code>
       </body>
       `)
-    document.close()
+      document.close()
 
-    window.onload = () => inject_livejson()
+      window.braid = { fetch: braid_fetch }
+      window.onload = () => inject_livejson()
+    }
   }
 })
 
 async function inject_livetext() {
-  let enter_error_state = (why) => {
-    console.log(`enter_error_state because: ${why}`)
-    textarea.style.background = 'pink'
-    textarea.style.color = '#800'
-    textarea.disabled = true
-  }
-  window.errorify = (msg) => {
-    enter_error_state(msg)
-    throw new Error(msg)
-  }
-
-  var braid = {fetch: braid_fetch}
-
-  chrome.runtime.sendMessage({ action: "reload" })
-
-  let on_bytes_received = s => {
-    console.log(`on_bytes_received[${s.slice(0, 500)}]`)
-    chrome.runtime.sendMessage({ action: "braid_in", data: s })
-  }
-
-  let on_bytes_going_out = (params, url) => {
-    console.log(`on_bytes_going_out[${constructHTTPRequest(params, url)}]`)
-    chrome.runtime.sendMessage({ action: "braid_out", data: constructHTTPRequest(params, url) })
-  }
-
-  function constructHTTPRequest(params, url) {
-    let httpRequest = `${params.method ?? 'GET'} ${url}\r\n`;
-    for (var pair of params.headers.entries()) {
-      httpRequest += `${pair[0]}: ${pair[1]}\r\n`;
-    }
-    httpRequest += '\r\n';
-    if (['POST', 'PATCH', 'PUT'].includes(params.method?.toUpperCase()) && params.body) {
-      httpRequest += params.body;
-    }
-    return httpRequest;
-  }
-
   let response = await fetch(chrome.runtime.getURL('dt_bg.wasm'))
   let wasmModuleBuffer = await response.arrayBuffer();
 
@@ -114,7 +115,7 @@ async function inject_livetext() {
     let commonStart = 0;
     while (
       commonStart < Math.min(last_text.length, textarea.value.length) &&
-        last_text[commonStart] == textarea.value[commonStart]
+      last_text[commonStart] == textarea.value[commonStart]
     ) {
       commonStart++;
     }
@@ -122,12 +123,12 @@ async function inject_livetext() {
     let commonEnd = 0;
     while (
       commonEnd <
-        Math.min(
-          last_text.length - commonStart,
-          textarea.value.length - commonStart
-        ) &&
-        last_text[last_text.length - commonEnd - 1] ==
-        textarea.value[textarea.value.length - commonEnd - 1]
+      Math.min(
+        last_text.length - commonStart,
+        textarea.value.length - commonStart
+      ) &&
+      last_text[last_text.length - commonEnd - 1] ==
+      textarea.value[textarea.value.length - commonEnd - 1]
     ) {
       commonEnd++;
     }
@@ -211,11 +212,13 @@ async function inject_livetext() {
         ],
       };
       fetchWithRetry(window.location.href, ops);
+      versions.push(ops)
+      chrome.runtime.sendMessage({ action: "new_version", version: ops })
     }
   });
 
   window.subscription_online = false
-  function set_subscription_online (bool) {
+  function set_subscription_online(bool) {
     if (subscription_online === bool) return
     subscription_online = bool
     console.log(bool ? 'Connected!' : 'Disconnected.')
@@ -225,16 +228,21 @@ async function inject_livetext() {
   async function connect() {
     try {
       var response = await braid.fetch(window.location.href,
-                                       {
-                                         subscribe: true,
-                                         parents: oplog.getRemoteVersion().map(x => x.join('-')),
-                                         headers: {Accept: 'text/plain'}
-                                       },
-                                       (x) => {
-                                         on_bytes_received(x)
-                                         set_subscription_online(true)
-                                       },
-                                       on_bytes_going_out)
+        {
+          subscribe: true,
+          parents: oplog.getRemoteVersion().map(x => x.join('-')),
+          headers: { Accept: 'text/plain' }
+        },
+        (x) => {
+          on_bytes_received(x)
+          set_subscription_online(true)
+        },
+        on_bytes_going_out)
+
+      headers = {}
+      for (let x of response.headers.entries()) headers[x[0].toLowerCase()] = x[1]
+      chrome.runtime.sendMessage({ action: "new_headers", headers })
+
       response.subscribe(({ version, parents, body, patches }) => {
         // chrome.runtime.sendMessage({ action: "braid_in", data: { version, parents, body, patches } });
 
@@ -245,6 +253,15 @@ async function inject_livetext() {
         }
 
         if (!patches) return;
+
+        let new_version = {
+          method: "GET",
+          version,
+          parents,
+          patches
+        }
+        versions.push(new_version)
+        chrome.runtime.sendMessage({ action: "new_version", version: new_version })
 
         let v = oplog.getLocalVersion();
 
@@ -330,33 +347,33 @@ async function inject_livetext() {
   function applyChanges(original, sel, changes) {
     for (var change of changes) {
       switch (change.kind) {
-      case "Del":
-        for (let i = 0; i < sel.length; i++) {
-          if (sel[i] > change.start) {
-            if (sel[i] > change.end) {
-              sel[i] -= change.end - change.start;
-            } else sel[i] = change.start;
+        case "Del":
+          for (let i = 0; i < sel.length; i++) {
+            if (sel[i] > change.start) {
+              if (sel[i] > change.end) {
+                sel[i] -= change.end - change.start;
+              } else sel[i] = change.start;
+            }
           }
-        }
 
-        original =
-          original.substring(0, change.start) +
-          original.substring(change.end);
-        break;
-      case "Ins":
-        for (let i = 0; i < sel.length; i++) {
-          if (sel[i] > change.start) {
-            sel[i] += change.content.length;
+          original =
+            original.substring(0, change.start) +
+            original.substring(change.end);
+          break;
+        case "Ins":
+          for (let i = 0; i < sel.length; i++) {
+            if (sel[i] > change.start) {
+              sel[i] += change.content.length;
+            }
           }
-        }
 
-        original =
-          original.substring(0, change.start) +
-          change.content +
-          original.substring(change.start);
-        break;
-      default:
-        errorify(`Unsupported change kind: ${change.kind}`)
+          original =
+            original.substring(0, change.start) +
+            change.content +
+            original.substring(change.start);
+          break;
+        default:
+          errorify(`Unsupported change kind: ${change.kind}`)
       }
     }
     return [original, sel];
@@ -364,42 +381,6 @@ async function inject_livetext() {
 }
 
 async function inject_livejson() {
-  let enter_error_state = (why) => {
-    console.log(`enter_error_state because: ${why}`)
-    textarea.style.background = 'pink'
-    textarea.style.color = '#800'
-  }
-  window.errorify = (msg) => {
-    enter_error_state(msg)
-    throw new Error(msg)
-  }
-
-  var braid = {fetch: braid_fetch}
-
-  chrome.runtime.sendMessage({ action: "reload" })
-
-  let on_bytes_received = s => {
-    console.log(`on_bytes_received[${s.slice(0, 500)}]`)
-    chrome.runtime.sendMessage({ action: "braid_in", data: s })
-  }
-
-  let on_bytes_going_out = (params, url) => {
-    console.log(`on_bytes_going_out[${constructHTTPRequest(params, url)}]`)
-    chrome.runtime.sendMessage({ action: "braid_out", data: constructHTTPRequest(params, url) })
-  }
-
-  function constructHTTPRequest(params, url) {
-    let httpRequest = `${params.method ?? 'GET'} ${url}\r\n`;
-    for (var pair of params.headers.entries()) {
-      httpRequest += `${pair[0]}: ${pair[1]}\r\n`;
-    }
-    httpRequest += '\r\n';
-    if (['POST', 'PATCH', 'PUT'].includes(params.method?.toUpperCase()) && params.body) {
-      httpRequest += params.body;
-    }
-    return httpRequest;
-  }
-
   let doc = null;
 
   let sent_count = 0;
@@ -408,7 +389,7 @@ async function inject_livejson() {
   let textarea = document.querySelector("#texty");
 
   window.subscription_online = false
-  function set_subscription_online (bool) {
+  function set_subscription_online(bool) {
     if (subscription_online === bool) return
     subscription_online = bool
     console.log(bool ? 'Connected!' : 'Disconnected.')
@@ -417,20 +398,24 @@ async function inject_livejson() {
   }
   async function connect() {
     try {
-      (
-        await braid.fetch(window.location.href, {
+      let response = await braid.fetch(window.location.href, {
           subscribe: true,
-          headers: {Accept: 'application/json'}
+          headers: { Accept: 'application/json' }
         }, on_bytes_received, on_bytes_going_out)
-      ).subscribe(
+      
+      headers = {}
+      for (let x of response.headers.entries()) headers[x[0].toLowerCase()] = x[1]
+      chrome.runtime.sendMessage({ action: "new_headers", headers })
+
+      response.subscribe(
         ({ version, parents, body, patches }) => {
           set_subscription_online(true)
           console.log(
             `v = ${JSON.stringify(
-                          { version, parents, body, patches },
-                          null,
-                          4
-                        )}`
+              { version, parents, body, patches },
+              null,
+              4
+            )}`
           );
 
           try {
@@ -464,6 +449,17 @@ async function inject_livejson() {
   connect();
 }
 
+function constructHTTPRequest(params, url) {
+  let httpRequest = `${params.method ?? 'GET'} ${url}\r\n`;
+  for (var pair of params.headers.entries()) {
+    httpRequest += `${pair[0]}: ${pair[1]}\r\n`;
+  }
+  httpRequest += '\r\n';
+  if (['POST', 'PATCH', 'PUT'].includes(params.method?.toUpperCase()) && params.body) {
+    httpRequest += params.body;
+  }
+  return httpRequest;
+}
 
 // // Open devtools to braid when hotkey is pressedn
 // chrome.runtime.onMessage.addListener((message, sender, send_response) => {

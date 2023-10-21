@@ -8,6 +8,10 @@
       font-family: Arial, sans-serif;
       padding: 20px;
     }
+    input {
+        padding: 0;
+        font-size: 11px;
+    }
     button {
       padding: 10px;
       margin-top: 20px;
@@ -55,7 +59,8 @@
       <div style="
            display: grid;
            grid-template-columns: 1fr 124px;
-           gap: 5px;">
+           gap: 5px;
+           justify-items: left;">
 
         <label for="content_type_select">Content-Type:</label>
         <select id="content_type_select">
@@ -66,40 +71,36 @@
           <option value="application/javascript">Javascript</option>
         </select>
 
-        <label for="subscribe">Subscribe:</label>
-        <input type="checkbox" id="subscribe" checked />
+        <label for="subscribe_request">Subscribe:</label>
+        <input type="checkbox" id="subscribe_request" />
 
-        <label for="version">Version:</label>
-        <input type="text" id="version" />
+        <label for="version_request">Version:</label>
+        <input type="text" id="version_request" />
 
-        <label for="parents">Parents:</label>
-        <input type="text" id="parents" />
+        <label for="parents_request">Parents:</label>
+        <input type="text" id="parents_request" />
       </div>
+
+      <button style="display: none" id="reload_button">Reload</button>
 
       <h2>Response</h2>
 
-      <div style="display: none">
-      <div>
-        <label for="merge-type">Merge-Type:</label>
-        <span type="text" id="merge-type"></span>
-      </div>
+      <div style="
+           display: grid;
+           grid-template-columns: 1fr 124px;
+           gap: 5px;">
 
-      <div>
-        <label for="subscribe">Subscribe:</label>
-        <input type="checkbox" id="subscribe" checked />
-      </div>
+        <span>Merge-Type:</span>
+        <span id="merge_type_response">(fill this in...)</span>
 
-      <div>
-        <label for="version">Version:</label>
-        <input type="text" id="version" />
-      </div>
+        <span>Subscribe:</span>
+        <span id="subscribe_response">(fill this in...)</span>
 
-      <div>
-        <label for="parents">Parents:</label>
-        <input type="text" id="parents" />
-      </div>
+        <span>Version:</span>
+        <span id="version_response">(fill this in...)</span>
 
-      <button id="reload_button">Reload</button>
+        <span>Parents:</span>
+        <span id="parents_response">(fill this in...)</span>
       </div>
     </div>
   </body>

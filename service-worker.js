@@ -25,73 +25,47 @@ chrome.webRequest.onSendHeaders.addListener(
   ["requestHeaders"]
 )
 
+function tell_tab_to_go_live (tabid, content_type) {
+  // Now wait until the tab has loaded, and activate the page replacement
+  chrome.tabs.onUpdated.addListener(function callback(curr_tabid, info, tab) {
+    // Check if tab update status is 'complete'
+    if (info.status === 'complete' && curr_tabid === tabid) {
+      // Send the message to go live!
+      chrome.tabs.sendMessage(
+        tabid,
+        {action: "replace_html", content_type: content_type}
+      )
+
+      // Remove the listener after we're done
+      chrome.tabs.onUpdated.removeListener(callback)
+    }
+  })
+}
+
+
 chrome.webRequest.onHeadersReceived.addListener(
   details => {
     console.log('%cHeaders received!', 'background: #ff8', details)
 
-    // Skip responses that don't accept subscriptions
-    if (!details.responseHeaders
-        .find(x => x.name.toLowerCase() === 'accept-subscribe'))
-      return
-
-    console.log('Server accepts subscription!')
-
-    // Remember the content type
     var content_type = details.responseHeaders
-        .find(header => header.name.toLowerCase() === 'content-type')
+        .find(header => header.name.toLowerCase() === 'content-type')?.value
 
-    console.log('Content Type:', content_type)
+    // If the resource says it accepts subscriptions, let's go live!
+    if (details.responseHeaders
+        .find(x => x.name.toLowerCase() === 'accept-subscribe')) {
 
-    // Now wait until the tab has loaded, and activate the page replacement
-    if (true)
-      // Listen for any changes on the active tab
-      chrome.tabs.onUpdated.addListener(function callback(tabId, info, tab) {
-        // Check if tab update status is 'complete' and the updated tab is the
-        // current active tab
-        if (info.status === 'complete' && tabId === details.tabId) {
-          chrome.tabs.sendMessage(
-            details.tabId,
-            {action: "replace_html",content_type: content_type.value}
-          )
+      console.log('Server accepts subscription!')
+      tell_tab_to_go_live(details.tabId, content_type)
+    }
 
-          // Remove the listener after we're done
-          chrome.tabs.onUpdated.removeListener(callback)
-        }
-      })
-
-
-    // // These are mike's failed experiments to make loading faster
-    // if (false)
-    //   chrome.scripting.executeScript({
-    //     target: {tabId: details.tabId},
-    //     files: ["./content-script.js",
-    //             "./dt.js",
-    //             "./braid-http-client.js",
-    //             "./apply-patch.js"
-    //            ]
-    //   }, injection_results => {
-    //     if (chrome.runtime.lastError) {
-    //       console.error(JSON.stringify(chrome.runtime.lastError))
-    //     } else {
-    //       // Content script has been injected.
-    //       // Send a message or perform other actions.
-    //       chrome.tabs.sendMessage(
-    //         details.tabId,
-    //         {action: "replace_html",content_type: content_type.value}
-    //       )
-    //     }
-    //   })
-
-    // if (false)
-    //   chrome.tabs.executeScript(
-    //     details.tabId, {file: 'content-script.js'},
-    //     results => {
-    //       chrome.tabs.sendMessage(
-    //         details.tabId,
-    //         {action: "replace_html",content_type: content_type.value}
-    //       )
-    //     }
-    //   )
+    // Else, check if the content-type is one of our known goodies, and
+    // start a subscription request anyway and see if it works
+    console.log('Content type is', content_type)
+    if (['application/json', 'text/plain', 'text/markdown'].includes(content_type)) {
+      console.log("TODO: let's try executing a fetch subscribe and use it if it works!")
+      // We could also do it for any resource, regardless of content-type, and
+      // just abort the fetch as soon as we get headers that don't say subscribe.
+    }
 
   },
   { urls: ["<all_urls>"], types: ["main_frame"] },

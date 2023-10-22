@@ -1,9 +1,9 @@
 # Braid-Chrome
 
-Chrome Extension adding Braid directly into your browser.
+Chrome Extension adding Braid-HTTP directly into your browser.
 
 Features:
-- Live-updates any Braid page, without the reload button
+- Live-updates any Braid-HTTP page, without the reload button
   - `Subscribe: true` to GET requests when your browser loads a page
   - the page live as updates occur to it
 - Collaborative editing for text, markdown, javascript, and json URLs

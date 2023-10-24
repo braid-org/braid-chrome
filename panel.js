@@ -138,6 +138,7 @@ function raw_update() {
         let py = svg_parent.getBoundingClientRect()
         py = py.y + py.height / 2
 
+        let actor_to_seq = {}
         for (let v of versions) {
             let rect = version_circles[v.version].getBoundingClientRect()
             let y = (rect.y + rect.height / 2) - py
@@ -148,22 +149,12 @@ function raw_update() {
 
             if (v.version == 'root') continue;
 
-            let act_seq = v.version.split('-')
-            act_seq[1] = 1 * act_seq[1]
-
-            let i = 0
-            for (let p of v.parents) {
-                let _act_seq = p.split('-')
-                _act_seq[1] = 1 * _act_seq[1]
-
-                if (_act_seq[0] == act_seq[0]) {
-                    i = Math.max(i, _act_seq[1] + 1)
-                }
+            let [actor, seq] = v.version.split('-')
+            seq = 1 * seq
+            for (let i = actor_to_seq[actor] ?? 0; i < seq; i++) {
+                v_to_realv[actor + '-' + i] = v.version
             }
-
-            for (; i < act_seq[1]; i++) {
-                v_to_realv[act_seq[0] + '-' + i] = v.version
-            }
+            actor_to_seq[actor] = seq + 1
         }
 
         let last_x = 0.5
@@ -222,6 +213,10 @@ function raw_update() {
 
             last_v = v.version
         }
+
+        // let dd = make_html('<pre></pre>')
+        // dd.textContent = JSON.stringify(v_to_realv, null, 4)
+        // id_messages.append(dd)        
     } else {
         id_messages.style.display = 'block'
 

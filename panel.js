@@ -76,14 +76,15 @@ function raw_update() {
     id_messages.innerHTML = ''
     if (!id_raw_messages.checked) {
         id_messages.style.display = 'grid'
-        id_messages.style['grid-template-columns'] = 'auto auto auto auto 1fr'
+        id_messages.style['grid-template-columns'] = 'auto auto auto auto auto 1fr'
+        id_messages.style['align-content'] = 'start'
 
         id_messages.append(make_html(`<div style="grid-column: span 2;margin-left:10px;margin-top:10px">Version</div>`))
-        id_messages.append(make_html(`<div style="grid-column: span 2;margin-top:10px">Range</div>`))
+        id_messages.append(make_html(`<div style="grid-column: span 3;margin-top:10px">Range</div>`))
         id_messages.append(make_html(`<div style="margin-top:10px">Content</div>`))
 
         for (let v of versions) {
-            for (let i = 0; i < 5; i++) {
+            for (let i = 0; i < 6; i++) {
                 id_messages.append(make_html(`<div style="width:10px;height:10px"></div>`))
             }
 
@@ -104,8 +105,10 @@ function raw_update() {
                 margin-right:10px;
                 margin-left:10px"></div>`))
             id_messages.append(make_html(`<div style="margin-right:10px;color:${actor_to_color[actor]}">${v.version}</div>`))
-            id_messages.append(make_html(`<div><div style="color:black;background:rgb(245,245,245);font-family:monospace;margin-right:10px">text</div></div>`))
-            id_messages.append(make_html(`<div style="margin-right:10px">${v.patches[0].range.slice(1, -1)}</div>`))
+            id_messages.append(make_html(`<div><div style="color:black;background:rgb(245,245,245);font-family:monospace;margin-right:10px">${v.patches[0].unit}</div></div>`))
+            id_messages.append(make_html(`<div style="font-family:monospace;margin-right:10px">${v.patches[0].unit == 'text' ? v.patches[0].range.slice(1, -1) : v.patches[0].range}</div>`))
+
+            id_messages.append(make_html(`<div style="margin-right:10px">=</div>`))
 
             let container = make_html(`<div style="margin-right:10px"></div>`)
             if (v.patches[0].content) {

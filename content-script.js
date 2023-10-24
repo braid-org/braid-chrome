@@ -419,11 +419,27 @@ async function inject_livejson() {
           );
 
           try {
+            let new_version = {
+              method: "GET",
+              version,
+              parents,
+              patches
+            }
+
             if (body != null) {
               doc = JSON.parse(body)
+
+              new_version.patches = [{
+                unit: 'json',
+                range: '',
+                content: body
+              }]
             } else {
               doc = apply_patch(doc, patches[0].range, JSON.parse(patches[0].content))
             }
+
+            versions.push(new_version)
+            chrome.runtime.sendMessage({ action: "new_version", version: new_version })
           } catch (e) {
             console.log(`eeee = ${e}`)
             console.log(`eeee = ${e.stack}`)

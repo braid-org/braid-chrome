@@ -252,7 +252,17 @@ async function inject_livetext() {
           // textarea.focus()
         }
 
-        if (!patches) return;
+        if (!patches) {
+          let new_version = {
+            method: "GET",
+            version,
+            parents,
+            patches: [{ unit: 'text', range: '[0:0]', content: '' }]
+          }
+          versions.push(new_version)
+          chrome.runtime.sendMessage({ action: "new_version", version: new_version })
+          return;
+        }
 
         let new_version = {
           method: "GET",
@@ -399,10 +409,10 @@ async function inject_livejson() {
   async function connect() {
     try {
       let response = await braid.fetch(window.location.href, {
-          subscribe: true,
-          headers: { Accept: 'application/json' }
-        }, on_bytes_received, on_bytes_going_out)
-      
+        subscribe: true,
+        headers: { Accept: 'application/json' }
+      }, on_bytes_received, on_bytes_going_out)
+
       headers = {}
       for (let x of response.headers.entries()) headers[x[0].toLowerCase()] = x[1]
       chrome.runtime.sendMessage({ action: "new_headers", headers })
@@ -417,6 +427,9 @@ async function inject_livejson() {
               4
             )}`
           );
+
+          if (!version) version = 'default-1'
+          if (!parents) parents = []
 
           try {
             let new_version = {

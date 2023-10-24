@@ -3,9 +3,6 @@ let versions = []
 let raw_messages = []
 let headers = {}
 
-let actor_to_color = {}
-let actor_color_angles = []
-
 window.onload = function () {
     try {
         const backgroundConnection = chrome.runtime.connect({ name: "braid-devtools-panel" })
@@ -73,6 +70,9 @@ function raw_update() {
         window[v].textContent = headers[k] ?? ''
     }
 
+    let actor_to_color = {}
+    let actor_color_angles = []
+
     id_messages.innerHTML = ''
     if (!id_raw_messages.checked) {
         id_messages.style.display = 'grid'
@@ -82,6 +82,12 @@ function raw_update() {
         id_messages.append(make_html(`<div style="grid-column: span 2;margin-left:10px;margin-top:10px">Version</div>`))
         id_messages.append(make_html(`<div style="grid-column: span 3;margin-top:10px">Range</div>`))
         id_messages.append(make_html(`<div style="margin-top:10px">Content</div>`))
+
+        let time_dag_width = 64
+        let time_dag_radius = 6
+
+        let svg_parent = null
+        let version_circles = {}
 
         for (let v of versions) {
             for (let i = 0; i < 6; i++) {
@@ -95,15 +101,19 @@ function raw_update() {
                 actor_to_color[actor] = angle_to_color(angle)
             }
 
-            id_messages.append(make_html(`<div style="
-                display: inline-block;
+            let version_circle = make_html(`<div style="
+                position: relative;
+                display: block;
                 vertical-align: middle;
-                width: 1em;
-                height: 1em;
-                border-radius: 50%;
-                background-color: ${actor_to_color[actor]};
+                width: ${time_dag_width}px;
+                height: ${time_dag_radius * 2}px;
+                background-color: transparent;
                 margin-right:10px;
-                margin-left:10px"></div>`))
+                margin-left:10px"></div>`)
+            version_circles[v.version] = version_circle
+            id_messages.append(version_circle)
+            if (!svg_parent) svg_parent = version_circle
+
             id_messages.append(make_html(`<div style="margin-right:10px;color:${actor_to_color[actor]}">${v.version}</div>`))
             id_messages.append(make_html(`<div><div style="color:black;background:rgb(245,245,245);font-family:monospace;margin-right:10px">${v.patches[0].unit}</div></div>`))
             id_messages.append(make_html(`<div style="font-family:monospace;margin-right:10px">${v.patches[0].unit == 'text' ? v.patches[0].range.slice(1, -1) : v.patches[0].range}</div>`))
@@ -122,6 +132,96 @@ function raw_update() {
         }
         id_messages.append(make_html(`<div style="width:10px;height:10px"></div>`))
 
+        let v_to_realv = {}
+        let version_ys = {}
+
+        let py = svg_parent.getBoundingClientRect()
+        py = py.y + py.height / 2
+
+        for (let v of versions) {
+            let rect = version_circles[v.version].getBoundingClientRect()
+            let y = (rect.y + rect.height / 2) - py
+
+            version_ys[v.version] = y
+
+            v_to_realv[v.version] = v.version
+
+            if (v.version == 'root') continue;
+
+            let act_seq = v.version.split('-')
+            act_seq[1] = 1 * act_seq[1]
+
+            let i = 0
+            for (let p of v.parents) {
+                let _act_seq = p.split('-')
+                _act_seq[1] = 1 * _act_seq[1]
+
+                if (_act_seq[0] == act_seq[0]) {
+                    i = Math.max(i, _act_seq[1] + 1)
+                }
+            }
+
+            for (; i < act_seq[1]; i++) {
+                v_to_realv[act_seq[0] + '-' + i] = v.version
+            }
+        }
+
+        let last_x = 0.5
+        let last_x_shadow_r = 0.25
+        let version_xs = {}
+        let last_v = null
+
+        for (let v of versions) {
+            let actor = v.version.split('-')[0]
+            let color = actor_to_color[actor]
+
+            let x = null
+            if (v.parents.length == 0 || (v.parents.length == 1 && v_to_realv[v.parents[0]] == last_v)) {
+                x = last_x
+            } else {
+                let r = parseInt(v.version[0], 36) / 35
+                x = last_x + last_x_shadow_r + r * (1 - 2 * last_x_shadow_r)
+                if (x > 1) x -= 1
+            }
+            version_xs[v.version] = x
+
+            let y = version_ys[v.version]
+
+            for (let p of v.parents) {
+                p = v_to_realv[p]
+                let h = y - version_ys[p]
+                let px = version_xs[p]
+
+                svg_parent.append(make_html(`<svg height="${h}px" width="${time_dag_width}px" style="position: absolute; top: ${y - h + time_dag_radius}px; left: 0px;">
+                    <line x1="${time_dag_radius + x * (time_dag_width - 2 * time_dag_radius)}px" y1="100%" x2="${time_dag_radius + px * (time_dag_width - 2 * time_dag_radius)}px" y2="0%" stroke="${color}" stroke-width="1px" />
+            </svg>`))
+            }
+
+            last_v = v.version
+        }
+
+        for (let v of versions) {
+            let actor = v.version.split('-')[0]
+            let color = actor_to_color[actor]
+
+            let x = null
+            if (v.parents.length == 0 || (v.parents.length == 1 && v_to_realv[v.parents[0]] == last_v)) {
+                x = last_x
+            } else {
+                let r = parseInt(v.version[0], 36) / 35
+                x = last_x + last_x_shadow_r + r * (1 - 2 * last_x_shadow_r)
+                if (x > 1) x -= 1
+            }
+            version_xs[v.version] = x
+
+            let y = version_ys[v.version]
+
+            svg_parent.append(make_html(`<svg height="${time_dag_radius * 2}px" width="${time_dag_radius * 2}px" style="position: absolute; top: ${y}px; left: ${x * (time_dag_width - 2 * time_dag_radius)}px;">
+                    <circle cx="50%" cy="50%" r="50%" stroke-width="0" fill="${color}" />
+            </svg>`))
+
+            last_v = v.version
+        }
     } else {
         id_messages.style.display = 'block'
 
@@ -152,21 +252,21 @@ function get_new_angle(angles) {
     let best = 0;
     let biggest = positions[0];
     for (let i = 0; i < positions.length - 1; i++) {
-      let smaller = positions[i];
-      let bigger = positions[i + 1];
-      if (bigger - smaller > biggest) {
-        best = (bigger + smaller) / 2;
-        biggest = bigger - smaller;
-      }
+        let smaller = positions[i];
+        let bigger = positions[i + 1];
+        if (bigger - smaller > biggest) {
+            best = (bigger + smaller) / 2;
+            biggest = bigger - smaller;
+        }
     }
     return best;
-  }
+}
 
-  function angle_to_color(angle) {
+function angle_to_color(angle) {
     return `rgb(${angle_to_color_raw(angle).join(",")})`;
-  }
+}
 
-  function angle_to_color_raw(angle) {
+function angle_to_color_raw(angle) {
     var t = angle;
     if (t < 0 || t > 1) t -= Math.floor(t);
     var n = Math.abs(t - 0.5);
@@ -190,11 +290,11 @@ function get_new_angle(angles) {
     var Kn = 1.97294;
 
     return [
-      255 * (n + e * ($n * r + Wn * i)),
-      255 * (n + e * (Zn * r + Qn * i)),
-      255 * (n + e * (Kn * r)),
+        255 * (n + e * ($n * r + Wn * i)),
+        255 * (n + e * (Zn * r + Qn * i)),
+        255 * (n + e * (Kn * r)),
     ];
-  }
+}
 
 // POST undefined HTTP/1.1
 // parents: "[\"b4ef158b-2e58-4965-90d3-6ab3ac232fb0\",10]"

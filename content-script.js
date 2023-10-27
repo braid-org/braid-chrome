@@ -49,7 +49,7 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
       document.write(`
       <script src="${chrome.runtime.getURL('braid-http-client.js')}"></script>
       <body
-          style="padding: 0px; margin: 0px; width: 100vw; height: 100vh; overflow-x: clip; box-sizing: border-box;"
+          style="padding: 0px; margin: 0px; width: 100vw; height: 100vh; overflow: clip; box-sizing: border-box;"
       >
           <span id="online" style="position: absolute; top: 5px; right: 5px;">•</span>
           <textarea
@@ -72,7 +72,7 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
       <script src="${chrome.runtime.getURL('braid-http-client.js')}"></script>
       <script src="${chrome.runtime.getURL('apply-patch.js')}"></script>
       <body
-          style="width: 100vw; height: 100vh; overflow-x: clip; box-sizing: border-box;"
+          style="width: 100vw; height: 100vh; overflow: clip; box-sizing: border-box;"
       >
         <span id="online" style="position: absolute; top: 5px; right: 5px;">•</span>
         <code

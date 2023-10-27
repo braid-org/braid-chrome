@@ -143,8 +143,8 @@ async function inject_livetext() {
     last_text = textarea.value;
 
     let v = oplog.getLocalVersion();
-    oplog.del(splicePos, numToDelete);
-    oplog.ins(splicePos, stuffToInsert);
+    if (numToDelete) oplog.del(splicePos, numToDelete);
+    if (stuffToInsert) oplog.ins(splicePos, stuffToInsert);
 
     for (let p of OpLog_get_patches(
       oplog.getPatchSince(v),

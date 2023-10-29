@@ -65,11 +65,12 @@
            ">
 
         <!-- 3 columns -->
-        <div style="
+        <div id="newmeta"
+             style="
              display: grid;
              grid-template-columns: 1fr 90px 90px;
              gap: 5px;
-             justify-items: left;" id="newmeta">
+             justify-items: left;">
 
           <b></b>
           <b>Request</b>
@@ -83,23 +84,23 @@
             <option value="text/markdown">Markdown</option>
             <option value="application/javascript">Javascript</option>
           </select>
-          <span id="content_type_response">(fill this in...)</span>
+          <span id="content_type_response"></span>
 
           <span>Merge-Type:</span>
           <span></span>
-          <span id="merge_type_response">(fill this in...)</span>
+          <span id="merge_type_response"></span>
 
           <label for="subscribe_request">Subscribe:</label>
-          <input type="checkbox" id="subscribe_request" style="margin: 0;"/>
-          <span id="subscribe_response">(fill this in...)</span>
+          <input type="checkbox" id="subscribe_request" checked style="margin: 0;"/>
+          <span id="subscribe_response"></span>
 
           <label for="version_request">Version:</label>
           <input type="text" id="version_request" />
-          <span id="version_response">(fill this in...)</span>
+          <span id="version_response"></span>
 
           <label for="parents_request">Parents:</label>
           <input type="text" id="parents_request" />
-          <span id="parents_response">(fill this in...)</span>
+          <span id="parents_response"></span>
 
           <button style="display: none" id="reload_button">Reload</button>
         </div>

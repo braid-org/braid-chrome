@@ -4,28 +4,30 @@ let raw_messages = []
 let headers = {}
 
 window.onload = function () {
-    try {
-        const backgroundConnection = chrome.runtime.connect({ name: "braid-devtools-panel" })
-        backgroundConnection.onMessage.addListener(add_message)
-
-        backgroundConnection.postMessage({ cmd: 'init', tab_id: chrome.devtools.inspectedWindow.tabId })
-
-        function tell_page_to_load_new_content_type() {
-            try {
-                backgroundConnection.postMessage({ cmd: "reload", content_type: content_type_select.value });
-            } catch (e) {
-                alert(`e = ${e.stack}`)
-            }
-        }
-
-        reload_button.onclick = tell_page_to_load_new_content_type
-        content_type_select.onchange = tell_page_to_load_new_content_type
-
-        id_raw_messages.onchange = () => update()
-    } catch (e) {
-        add_message('eee:' + e.stack)
-    }
+    connect()
 };
+
+function connect() {
+    const backgroundConnection = chrome.runtime.connect({ name: "braid-devtools-panel" })
+    backgroundConnection.onMessage.addListener(add_message)
+
+    backgroundConnection.postMessage({ cmd: 'init', tab_id: chrome.devtools.inspectedWindow.tabId })
+
+    function tell_page_to_load_new_content_type() {
+        try {
+            backgroundConnection.postMessage({ cmd: "reload", content_type: content_type_select.value });
+        } catch (e) {
+            alert(`e = ${e.stack}`)
+        }
+    }
+
+    reload_button.onclick = tell_page_to_load_new_content_type
+    content_type_select.onchange = tell_page_to_load_new_content_type
+
+    backgroundConnection.onDisconnect.addListener(() => setTimeout(connect, 500));
+
+    id_raw_messages.onchange = () => update()
+}
 
 function add_message(message) {
     // Handle message from content script here

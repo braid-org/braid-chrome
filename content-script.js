@@ -390,6 +390,7 @@ async function inject_livetext() {
   }
 }
 
+var default_version_count = 1
 async function inject_livejson() {
   let doc = null;
 
@@ -428,7 +429,7 @@ async function inject_livejson() {
             )}`
           );
 
-          if (!version) version = 'default-1'
+          if (!version) version = 'default-' + default_version_count++
           if (!parents) parents = []
 
           try {

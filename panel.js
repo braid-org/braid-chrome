@@ -7,6 +7,8 @@ window.onload = function () {
     connect()
 };
 
+window.onresize = () => update()
+
 function connect() {
     const backgroundConnection = chrome.runtime.connect({ name: "braid-devtools-panel" })
     backgroundConnection.onMessage.addListener(add_message)

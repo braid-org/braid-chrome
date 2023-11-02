@@ -63,7 +63,7 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
       document.close()
 
       window.braid = { fetch: braid_fetch }
-      await inject_livetext()
+      await inject_livetext(request.subscribe, request.version)
 
       // JSON version
     } else if (request.content_type === "application/json") {
@@ -90,7 +90,7 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
   }
 })
 
-async function inject_livetext() {
+async function inject_livetext(subscribe, version) {
   let response = await fetch(chrome.runtime.getURL('dt_bg.wasm'))
   let wasmModuleBuffer = await response.arrayBuffer();
 
@@ -110,6 +110,8 @@ async function inject_livetext() {
   let textarea = document.querySelector("#texty");
 
   let oplog = new OpLog(peer);
+
+  if (!subscribe) textarea.disabled = true
 
   textarea.addEventListener("input", async () => {
     let commonStart = 0;
@@ -225,13 +227,16 @@ async function inject_livetext() {
     var online = document.querySelector("#online").style
     online.color = bool ? 'lime' : 'orange';
   }
+
+  if (!subscribe) online.color = 'rgba(0,0,0,0)'
+
   async function connect() {
     try {
       var response = await braid.fetch(window.location.href,
         {
-          subscribe: true,
+          subscribe,
           parents: oplog.getRemoteVersion().map(x => x.join('-')),
-          headers: { Accept: 'text/plain' }
+          headers: { Accept: 'text/plain', ...(version ? {Version: version} : {}) }
         },
         (x) => {
           on_bytes_received(x)
@@ -243,7 +248,13 @@ async function inject_livetext() {
       for (let x of response.headers.entries()) headers[x[0].toLowerCase()] = x[1]
       chrome.runtime.sendMessage({ action: "new_headers", headers })
 
-      response.subscribe(({ version, parents, body, patches }) => {
+      if (!subscribe) {
+        let s = await response.text()
+        on_bytes_received(s)
+        textarea.value = s
+      }
+
+      if (subscribe) response.subscribe(({ version, parents, body, patches }) => {
         // chrome.runtime.sendMessage({ action: "braid_in", data: { version, parents, body, patches } });
 
         if (textarea.hasAttribute("readonly")) {

@@ -25,7 +25,7 @@ chrome.webRequest.onSendHeaders.addListener(
   ["requestHeaders"]
 )
 
-function tell_tab_to_go_live(tabid, content_type) {
+function tell_tab_to_go_live(tabid, content_type, subscribe) {
   // Now wait until the tab has loaded, and activate the page replacement
   chrome.tabs.onUpdated.addListener(function callback(curr_tabid, info, tab) {
     // Check if tab update status is 'complete'
@@ -33,7 +33,7 @@ function tell_tab_to_go_live(tabid, content_type) {
       // Send the message to go live!
       chrome.tabs.sendMessage(
         tabid,
-        { action: "replace_html", content_type: content_type }
+        { action: "replace_html", content_type, subscribe }
       )
 
       // Remove the listener after we're done
@@ -55,7 +55,7 @@ chrome.webRequest.onHeadersReceived.addListener(
       .find(x => x.name.toLowerCase() === 'accept-subscribe')) {
 
       console.log('Server accepts subscription!')
-      tell_tab_to_go_live(details.tabId, content_type)
+      tell_tab_to_go_live(details.tabId, content_type, true)
     }
 
     // Else, check if the content-type is one of our known goodies, and
@@ -101,7 +101,7 @@ chrome.runtime.onConnect.addListener((port) => {
       } else if (message.cmd == 'reload') {
         chrome.tabs.sendMessage(
           tab_id,
-          { action: "replace_html", content_type: message.content_type })
+          { ...message, action: "replace_html" })
       }
     });
     port.onDisconnect.addListener(() => {

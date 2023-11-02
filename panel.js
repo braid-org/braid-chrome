@@ -17,7 +17,7 @@ function connect() {
 
     function tell_page_to_load_new_content_type() {
         try {
-            backgroundConnection.postMessage({ cmd: "reload", content_type: content_type_select.value });
+            backgroundConnection.postMessage({ cmd: "reload", content_type: content_type_select.value, subscribe: subscribe_request.checked, ...(version_request.value ? {version: version_request.value} : {})});
         } catch (e) {
             alert(`e = ${e.stack}`)
         }

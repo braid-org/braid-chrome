@@ -13,13 +13,6 @@
         padding: 0;
         font-size: 11px;
     }
-    button {
-      padding: 10px;
-      margin-top: 20px;
-    }
-    #newmeta > input[type=text], #newmeta > select {
-        width: 80px
-    }
   </style>
   <body
     style="
@@ -69,7 +62,7 @@
              style="
              display: grid;
              grid-template-columns: 1fr 90px 90px;
-             gap: 5px;
+             gap: 5px 10px;
              justify-items: left;">
 
           <b></b>
@@ -77,7 +70,7 @@
           <b>Response</b>
 
           <label for="content_type_select" style='text-wrap:nowrap'>Content-Type:</label>
-          <select id="content_type_select">
+          <select id="content_type_select" style="width:90px">
             <option value="text/plain">Text</option>
             <option value="text/html">HTML</option>
             <option value="application/json">JSON</option>
@@ -95,14 +88,16 @@
           <span id="subscribe_response"></span>
 
           <label for="version_request">Version:</label>
-          <input type="text" id="version_request" />
+          <input type="text" id="version_request" style="width:86px"/>
           <span id="version_response"></span>
 
           <label for="parents_request">Parents:</label>
-          <input type="text" id="parents_request" />
+          <input type="text" id="parents_request" style="width:86px" />
           <span id="parents_response"></span>
 
-          <button style="display: none" id="reload_button">Reload</button>
+          <div></div>
+          <button id="reload_button" style="justify-self: end;font-size:80%">resubmit</button>
+          <div></div>
         </div>
       </div>
 

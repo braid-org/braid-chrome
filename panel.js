@@ -3,6 +3,9 @@ let versions = []
 let raw_messages = []
 let headers = {}
 
+let last_version = ''
+let last_parents = ''
+
 window.onload = function () {
     connect()
 };
@@ -17,18 +20,45 @@ function connect() {
 
     function tell_page_to_load_new_content_type() {
         try {
-            backgroundConnection.postMessage({ cmd: "reload", content_type: content_type_select.value, subscribe: subscribe_request.checked, ...(version_request.value ? {version: version_request.value} : {})});
+            backgroundConnection.postMessage({ cmd: "reload", content_type: content_type_select.value, subscribe: subscribe_request.checked, ...(version_request.value ? { version: version_request.value } : {}), ...(parents_request.value ? { parents: parents_request.value } : {}) });
+
+            last_version = version_request.value
+            last_parents = parents_request.value
+            update_show_resubmit()
         } catch (e) {
             alert(`e = ${e.stack}`)
         }
     }
 
-    reload_button.onclick = tell_page_to_load_new_content_type
+    resubmit_button.onclick = tell_page_to_load_new_content_type
     content_type_select.onchange = tell_page_to_load_new_content_type
 
     backgroundConnection.onDisconnect.addListener(() => setTimeout(connect, 500));
 
     id_raw_messages.onchange = () => update()
+
+    subscribe_request.onchange = () => {
+        if (subscribe_request.checked) {
+            version_request.value = ''
+            parents_request.value = ''
+            tell_page_to_load_new_content_type()
+        }
+    }
+
+    version_request.oninput = update_show_resubmit
+    parents_request.oninput = update_show_resubmit
+    update_show_resubmit()
+
+    function update_show_resubmit() {
+        if (version_request.value || parents_request.value) {
+            subscribe_request.checked = false
+            subscribe_request.disabled = true
+        } else {
+            subscribe_request.disabled = false
+        }
+
+        resubmit_button.style.display = (last_version != version_request.value || last_parents != parents_request.value) ? 'block' : 'none'
+    }
 }
 
 function add_message(message) {

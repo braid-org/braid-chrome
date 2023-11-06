@@ -63,7 +63,7 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
       document.close()
 
       window.braid = { fetch: braid_fetch }
-      await inject_livetext(request.subscribe, request.version)
+      await inject_livetext(request.subscribe, request.version, request.parents)
 
       // JSON version
     } else if (request.content_type === "application/json") {
@@ -90,7 +90,7 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
   }
 })
 
-async function inject_livetext(subscribe, version) {
+async function inject_livetext(subscribe, version, parents) {
   let response = await fetch(chrome.runtime.getURL('dt_bg.wasm'))
   let wasmModuleBuffer = await response.arrayBuffer();
 
@@ -235,8 +235,9 @@ async function inject_livetext(subscribe, version) {
       var response = await braid.fetch(window.location.href,
         {
           subscribe,
-          parents: oplog.getRemoteVersion().map(x => x.join('-')),
-          headers: { Accept: 'text/plain', ...(version ? {Version: version} : {}) }
+          version: version ? JSON.parse(version) : null,
+          parents: (parents ? JSON.parse(`[${parents}]`) : null) || (subscribe && oplog.getRemoteVersion().map(x => x.join('-'))),
+          headers: { Accept: 'text/plain' }
         },
         (x) => {
           on_bytes_received(x)

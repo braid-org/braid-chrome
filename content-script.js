@@ -3,6 +3,8 @@ var headers = {}
 var versions = []
 var raw_messages = []
 
+let clear_previous_funcs = []
+
 function enter_error_state(why) {
   console.log(`enter_error_state because: ${why}`)
   textarea.style.background = 'pink'
@@ -34,6 +36,10 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
     chrome.runtime.sendMessage({ action: "init", headers, versions, raw_messages })
 
   } else if (request.action == "replace_html") {
+    // clear previous stuff
+    for (let func of clear_previous_funcs) func()
+    clear_previous_funcs = []
+
     console.log(`clearing content, to replace with live updating ${request.content_type}`)
 
     headers = {}
@@ -91,6 +97,9 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
 })
 
 async function inject_livetext(subscribe, version, parents) {
+  let is_stopped = false
+  clear_previous_funcs.push(() => is_stopped = true)
+
   let response = await fetch(chrome.runtime.getURL('dt_bg.wasm'))
   let wasmModuleBuffer = await response.arrayBuffer();
 
@@ -167,7 +176,7 @@ async function inject_livetext(subscribe, version, parents) {
       let waitTime = 100;
 
       const fetchWithRetry = async (url, options) => {
-        while (true) {
+        while (!is_stopped) {
           try {
             let x = await braid.fetch(url, { ...options }, on_bytes_received, on_bytes_going_out)
             if (x.status !== 200) throw 'status not 200: ' + x.status
@@ -230,10 +239,16 @@ async function inject_livetext(subscribe, version, parents) {
 
   if (!subscribe) online.color = 'rgba(0,0,0,0)'
 
+  let abort_controller = null
+  clear_previous_funcs.push(() => abort_controller?.abort())
+
   async function connect() {
+    if (is_stopped) return;
     try {
+      abort_controller = new AbortController()
       var response = await braid.fetch(window.location.href,
         {
+          signal: abort_controller.signal,
           subscribe,
           version: version ? JSON.parse(version) : null,
           parents: (parents ? JSON.parse(`[${parents}]`) : null) || (subscribe && oplog.getRemoteVersion().map(x => x.join('-'))),
@@ -404,6 +419,9 @@ async function inject_livetext(subscribe, version, parents) {
 
 var default_version_count = 1
 async function inject_livejson() {
+  let is_stopped = false
+  clear_previous_funcs.push(() => is_stopped = true)
+
   let doc = null;
 
   let sent_count = 0;
@@ -419,9 +437,16 @@ async function inject_livejson() {
     var online = document.querySelector("#online").style
     online.color = bool ? 'lime' : 'orange';
   }
+
+  let abort_controller = null
+  clear_previous_funcs.push(() => abort_controller?.abort())
+
   async function connect() {
+    if (is_stopped) return;
     try {
+      abort_controller = new AbortController()
       let response = await braid.fetch(window.location.href, {
+        signal: abort_controller.signal,        
         subscribe: true,
         headers: { Accept: 'application/json' }
       }, on_bytes_received, on_bytes_going_out)

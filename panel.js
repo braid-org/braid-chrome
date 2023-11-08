@@ -108,7 +108,7 @@ function raw_update() {
     let actor_color_angles = []
 
     id_messages.innerHTML = ''
-    if (!id_raw_messages.checked) {
+    if (!id_raw_messages.checked && versions?.length) {
         id_messages.style.display = 'grid'
         id_messages.style['grid-template-columns'] = 'auto auto auto auto auto 1fr'
         id_messages.style['align-content'] = 'start'
@@ -251,7 +251,7 @@ function raw_update() {
         // let dd = make_html('<pre></pre>')
         // dd.textContent = JSON.stringify(v_to_realv, null, 4)
         // id_messages.append(dd)        
-    } else {
+    } else if (id_raw_messages.checked && raw_messages?.length) {
         id_messages.style.display = 'block'
 
         for (let msg of raw_messages) {
@@ -265,6 +265,11 @@ function raw_update() {
 
             id_messages.append(d)
         }
+    } else {
+        let d = document.createElement('div')
+        d.textContent = 'nothing to show'
+        d.style.cssText = `margin:10px`
+        id_messages.append(d)
     }
 
     id_messages.scrollTop = id_messages.scrollHeight

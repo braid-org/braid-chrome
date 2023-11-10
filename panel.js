@@ -123,6 +123,18 @@ function raw_update() {
         let svg_parent = null
         let version_circles = {}
 
+        // remove duplicate versions
+        if (true) {
+            let seen = {}
+            let good_versions = []
+            for (let v of versions) {
+                if (seen[v.version]) continue
+                seen[v.version] = true
+                good_versions.push(v)
+            }
+            versions = good_versions
+        }
+
         for (let v of versions) {
             for (let i = 0; i < 6; i++) {
                 id_messages.append(make_html(`<div style="width:10px;height:10px"></div>`))

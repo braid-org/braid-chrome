@@ -33,7 +33,7 @@ function tell_tab_to_go_live(tabid, content_type, subscribe) {
       // Send the message to go live!
       chrome.tabs.sendMessage(
         tabid,
-        { action: "replace_html", content_type, subscribe }
+        { cmd: "reload", content_type, subscribe }
       )
 
       // Remove the listener after we're done
@@ -94,15 +94,8 @@ chrome.runtime.onConnect.addListener((port) => {
       if (message.cmd == 'init') {
         tab_id = message.tab_id
         tab_to_dev[tab_id] = port
-
-        chrome.tabs.sendMessage(
-          tab_id,
-          { action: "dev_panel_openned" })
-      } else if (message.cmd == 'reload') {
-        chrome.tabs.sendMessage(
-          tab_id,
-          { ...message, action: "replace_html" })
       }
+      chrome.tabs.sendMessage(tab_id, message)
     });
     port.onDisconnect.addListener(() => {
       delete tab_to_dev[tab_id]

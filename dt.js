@@ -1206,11 +1206,11 @@ function OpLog_get_patches(bytes, op_runs) {
             let I = i + j
             if (
                 j == len ||
-                    parentss[I].length != 1 ||
-                    parentss[I][0][0] != versions[I - 1][0] ||
-                    parentss[I][0][1] != versions[I - 1][1] ||
-                    versions[I][0] != versions[I - 1][0] ||
-                    versions[I][1] != versions[I - 1][1] + 1
+                parentss[I].length != 1 ||
+                parentss[I][0][0] != versions[I - 1][0] ||
+                parentss[I][0][1] != versions[I - 1][1] ||
+                versions[I][0] != versions[I - 1][0] ||
+                versions[I][1] != versions[I - 1][1] + 1
             ) {
                 patches.push({
                     version,
@@ -1233,109 +1233,6 @@ function OpLog_get_patches(bytes, op_runs) {
         i += len
     })
     return patches
-
-    function parseDT(byte_array) {
-        if (
-            new TextDecoder().decode(new Uint8Array(byte_array.splice(0, 8))) !==
-                "DMNDTYPS"
-        )
-            errorify("dt parse error, expected DMNDTYPS");
-
-        if (byte_array.shift() != 0)
-            errorify("dt parse error, expected version 0");
-
-        let agents = [];
-        let versions = [];
-        let parentss = [];
-
-        while (byte_array.length) {
-            let id = byte_array.shift();
-            let len = read_varint(byte_array);
-            if (id == 1) {
-            } else if (id == 3) {
-                let goal = byte_array.length - len;
-                while (byte_array.length > goal) {
-                    agents.push(read_string(byte_array));
-                }
-            } else if (id == 20) {
-            } else if (id == 21) {
-                let seqs = {};
-                let goal = byte_array.length - len;
-                while (byte_array.length > goal) {
-                    let part0 = read_varint(byte_array);
-                    let has_jump = part0 & 1;
-                    let agent_i = (part0 >> 1) - 1;
-                    let run_length = read_varint(byte_array);
-                    let jump = 0;
-                    if (has_jump) {
-                        let part2 = read_varint(byte_array);
-                        jump = part2 >> 1;
-                        if (part2 & 1) jump *= -1;
-                    }
-                    let base = (seqs[agent_i] || 0) + jump;
-
-                    for (let i = 0; i < run_length; i++) {
-                        versions.push([agents[agent_i], base + i]);
-                    }
-                    seqs[agent_i] = base + run_length;
-                }
-            } else if (id == 23) {
-                let count = 0;
-                let goal = byte_array.length - len;
-                while (byte_array.length > goal) {
-                    let run_len = read_varint(byte_array);
-
-                    let parents = [];
-                    let has_more = 1;
-                    while (has_more) {
-                        let x = read_varint(byte_array);
-                        let is_foreign = 0x1 & x;
-                        has_more = 0x2 & x;
-                        let num = x >> 2;
-
-                        if (x == 1) {
-                            parents.push(["root"]);
-                        } else if (!is_foreign) {
-                            parents.push(versions[count - num]);
-                        } else {
-                            parents.push([agents[num - 1], read_varint(byte_array)]);
-                        }
-                    }
-                    parentss.push(parents);
-                    count++;
-
-                    for (let i = 0; i < run_len - 1; i++) {
-                        parentss.push([versions[count - 1]]);
-                        count++;
-                    }
-                }
-            } else {
-                byte_array.splice(0, len);
-            }
-        }
-
-        function read_string(byte_array) {
-            return new TextDecoder().decode(
-                new Uint8Array(byte_array.splice(0, read_varint(byte_array)))
-            );
-        }
-
-        function read_varint(byte_array) {
-            let result = 0;
-            let shift = 0;
-            while (true) {
-                if (byte_array.length === 0)
-                    errorify("byte array does not contain varint");
-
-                let byte_val = byte_array.shift();
-                result |= (byte_val & 0x7f) << shift;
-                if ((byte_val & 0x80) == 0) return result;
-                shift += 7;
-            }
-        }
-
-        return [agents, versions, parentss];
-    }
 }
 
 function OpLog_create_bytes(version, parents, pos, ins) {
@@ -1486,6 +1383,244 @@ function OpLog_create_bytes(version, parents, pos, ins) {
     //   console.log(bytes);
 
     return bytes;
+}
+
+function OpLog_diff_from(doc, frontier) {
+    let s = OpLog_get(doc, frontier);
+    let a = s.split("");
+    let far_left = '';
+    for (let xf of doc.getXFSince(OpLog_get.last_local_version)) {
+        console.log(`xf = ${JSON.stringify(xf, null, 4)}`);
+        if (xf.kind == "Ins") {
+            a.splice(
+                xf.start,
+                0,
+                ...xf.content.split("").map((c) => `+${c}`)
+            );
+        } else if (xf.kind == "Del") {
+            let removed = a.splice(xf.start, xf.end - xf.start);
+            removed = removed
+                .map((c) => {
+                    if (c.length == 1) return c;
+                    if (c[0] == "+") return c.slice(2);
+                    return c.slice(1);
+                })
+                .join("");
+
+            if (xf.start == 0) {
+                far_left += removed
+            } else {
+                if (a[xf.start - 1].length == 1) {
+                    a[xf.start - 1] = ` ${a[xf.start - 1]}`
+                }
+                a[xf.start - 1] += removed
+            }
+        }
+    }
+
+    let diff = []
+    if (far_left) diff.push([-1, far_left])
+    for (let aa of a) {
+        if (aa.length == 1) {
+            if (diff[diff.length - 1]?.[0] == 0) {
+                diff[diff.length - 1][1] += aa
+            } else {
+                diff.push([0, aa])
+            }
+        } else if (aa[0] == '+') {
+            if (diff[diff.length - 1]?.[0] == 1) {
+                diff[diff.length - 1][1] += aa[1]
+            } else {
+                diff.push([1, aa[1]])
+            }
+        } else {
+            if (diff[diff.length - 1]?.[0] == 0) {
+                diff[diff.length - 1][1] += aa[1]
+            } else {
+                diff.push([0, aa[1]])
+            }
+        }
+
+        if (aa.length > 2) {
+            if (diff[diff.length - 1]?.[0] == -1) {
+                diff[diff.length - 1][1] += aa.slice(2)
+            } else {
+                diff.push([-1, aa.slice(2)])
+            }
+        }
+    }
+
+    return diff;
+}
+
+function OpLog_get(doc, frontier) {
+    if (Array.isArray(frontier))
+        frontier = Object.fromEntries(frontier.map((x) => [x, true]));
+
+    let local_version = [];
+    let [agents, versions, parentss] = parseDT([...doc.toBytes()]);
+    for (let i = 0; i < versions.length; i++) {
+        if (frontier[versions[i].join("-")]) {
+            local_version.push(i);
+        }
+    }
+    local_version = new Uint32Array(local_version);
+    OpLog_get.last_local_version = local_version;
+
+    let after_versions = {};
+    if (true) {
+        let [agents, versions, parentss] = parseDT([
+            ...doc.getPatchSince(local_version),
+        ]);
+        for (let i = 0; i < versions.length; i++) {
+            after_versions[versions[i].join("-")] = true;
+        }
+    }
+
+    let new_doc = new Doc();
+    let op_runs = doc.getOpsSince([]);
+    let i = 0;
+    op_runs.forEach((op_run) => {
+        let parents = parentss[i].map((x) => x.join("-"));
+        let start = op_run.start;
+        let end = start + 1;
+        let content = op_run.content?.[0];
+
+        let len = op_run.end - op_run.start;
+        let base_i = i;
+        for (let j = 1; j <= len; j++) {
+            let I = base_i + j;
+            if (
+                j == len ||
+                parentss[I].length != 1 ||
+                parentss[I][0][0] != versions[I - 1][0] ||
+                parentss[I][0][1] != versions[I - 1][1] ||
+                versions[I][0] != versions[I - 1][0] ||
+                versions[I][1] != versions[I - 1][1] + 1
+            ) {
+                for (; i < I; i++) {
+                    let version = versions[i].join("-");
+                    if (!after_versions[version]) {
+                        new_doc.mergeBytes(
+                            OpLog_create_bytes(
+                                version,
+                                parentss[i].map((x) => x.join("-")),
+                                content ? start + (i - base_i) : start,
+                                content?.[0]
+                            )
+                        );
+                    }
+                    if (op_run.content) content = content.slice(1);
+                }
+                content = "";
+            }
+            if (op_run.content) content += op_run.content[j];
+        }
+    });
+    return new_doc.get();
+}
+
+function parseDT(byte_array) {
+    if (
+        new TextDecoder().decode(new Uint8Array(byte_array.splice(0, 8))) !==
+        "DMNDTYPS"
+    )
+        errorify("dt parse error, expected DMNDTYPS");
+
+    if (byte_array.shift() != 0)
+        errorify("dt parse error, expected version 0");
+
+    let agents = [];
+    let versions = [];
+    let parentss = [];
+
+    while (byte_array.length) {
+        let id = byte_array.shift();
+        let len = read_varint(byte_array);
+        if (id == 1) {
+        } else if (id == 3) {
+            let goal = byte_array.length - len;
+            while (byte_array.length > goal) {
+                agents.push(read_string(byte_array));
+            }
+        } else if (id == 20) {
+        } else if (id == 21) {
+            let seqs = {};
+            let goal = byte_array.length - len;
+            while (byte_array.length > goal) {
+                let part0 = read_varint(byte_array);
+                let has_jump = part0 & 1;
+                let agent_i = (part0 >> 1) - 1;
+                let run_length = read_varint(byte_array);
+                let jump = 0;
+                if (has_jump) {
+                    let part2 = read_varint(byte_array);
+                    jump = part2 >> 1;
+                    if (part2 & 1) jump *= -1;
+                }
+                let base = (seqs[agent_i] || 0) + jump;
+
+                for (let i = 0; i < run_length; i++) {
+                    versions.push([agents[agent_i], base + i]);
+                }
+                seqs[agent_i] = base + run_length;
+            }
+        } else if (id == 23) {
+            let count = 0;
+            let goal = byte_array.length - len;
+            while (byte_array.length > goal) {
+                let run_len = read_varint(byte_array);
+
+                let parents = [];
+                let has_more = 1;
+                while (has_more) {
+                    let x = read_varint(byte_array);
+                    let is_foreign = 0x1 & x;
+                    has_more = 0x2 & x;
+                    let num = x >> 2;
+
+                    if (x == 1) {
+                        parents.push(["root"]);
+                    } else if (!is_foreign) {
+                        parents.push(versions[count - num]);
+                    } else {
+                        parents.push([agents[num - 1], read_varint(byte_array)]);
+                    }
+                }
+                parentss.push(parents);
+                count++;
+
+                for (let i = 0; i < run_len - 1; i++) {
+                    parentss.push([versions[count - 1]]);
+                    count++;
+                }
+            }
+        } else {
+            byte_array.splice(0, len);
+        }
+    }
+
+    function read_string(byte_array) {
+        return new TextDecoder().decode(
+            new Uint8Array(byte_array.splice(0, read_varint(byte_array)))
+        );
+    }
+
+    function read_varint(byte_array) {
+        let result = 0;
+        let shift = 0;
+        while (true) {
+            if (byte_array.length === 0)
+                errorify("byte array does not contain varint");
+
+            let byte_val = byte_array.shift();
+            result |= (byte_val & 0x7f) << shift;
+            if ((byte_val & 0x80) == 0) return result;
+            shift += 7;
+        }
+    }
+
+    return [agents, versions, parentss];
 }
 
 function decode_version(v) {

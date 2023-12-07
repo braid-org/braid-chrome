@@ -6,6 +6,8 @@ let headers = {}
 let last_version = ''
 let last_parents = ''
 
+let backgroundConnection = null
+
 window.onload = function () {
     connect()
 };
@@ -13,7 +15,7 @@ window.onload = function () {
 window.onresize = () => update()
 
 function connect() {
-    const backgroundConnection = chrome.runtime.connect({ name: "braid-devtools-panel" })
+    backgroundConnection = chrome.runtime.connect({ name: "braid-devtools-panel" })
     backgroundConnection.onMessage.addListener(add_message)
 
     backgroundConnection.postMessage({ cmd: 'init', tab_id: chrome.devtools.inspectedWindow.tabId })
@@ -135,7 +137,10 @@ function raw_update() {
             versions = good_versions
         }
 
-        for (let v of versions) {
+        for (let i = 0; i < versions.length; i++) {
+            let v = versions[i]
+            let last = i == versions.length - 1
+
             for (let i = 0; i < 6; i++) {
                 id_messages.append(make_html(`<div style="width:10px;height:10px"></div>`))
             }
@@ -147,26 +152,34 @@ function raw_update() {
                 actor_to_color[actor] = angle_to_color(angle)
             }
 
-            let version_circle = make_html(`<div style="
+            let my_make_html = (s) => {
+                let d = make_html(s)
+                d.style.cursor = 'pointer'
+                d.onclick = () => {
+                    backgroundConnection.postMessage({ cmd: "show_diff", from_version: !last ? v.version : null });
+                }
+                return d
+            }
+
+            let version_circle = my_make_html(`<div style="
                 position: relative;
                 display: block;
                 vertical-align: middle;
                 width: ${time_dag_width}px;
                 height: ${time_dag_radius * 2}px;
                 background-color: transparent;
-                margin-right:10px;
-                margin-left:10px"></div>`)
+                padding-right:10px;"></div>`)
             version_circles[v.version] = version_circle
             id_messages.append(version_circle)
             if (!svg_parent) svg_parent = version_circle
 
-            id_messages.append(make_html(`<div style="margin-right:10px;color:${actor_to_color[actor]}">${v.version}</div>`))
-            id_messages.append(make_html(`<div><div style="color:black;background:rgb(245,245,245);font-family:monospace;margin-right:10px">${v.patches[0].unit}</div></div>`))
-            id_messages.append(make_html(`<div style="font-family:monospace;margin-right:10px">${v.patches[0].unit == 'text' ? v.patches[0].range.slice(1, -1) : v.patches[0].range}</div>`))
+            id_messages.append(my_make_html(`<div style="padding-right:10px;color:${actor_to_color[actor]}">${v.version}</div>`))
+            id_messages.append(my_make_html(`<div><div style="color:black;background:rgb(245,245,245);font-family:monospace;padding-right:10px">${v.patches[0].unit}</div></div>`))
+            id_messages.append(my_make_html(`<div style="font-family:monospace;padding-right:10px">${v.patches[0].unit == 'text' ? v.patches[0].range.slice(1, -1) : v.patches[0].range}</div>`))
 
-            id_messages.append(make_html(`<div style="margin-right:10px">=</div>`))
+            id_messages.append(my_make_html(`<div style="padding-right:10px">=</div>`))
 
-            let container = make_html(`<div style="margin-right:10px"></div>`)
+            let container = my_make_html(`<div style="padding-right:10px"></div>`)
             if (v.patches[0].content) {
                 let pre = make_html(`<pre style="padding:0px;margin:0px;color:black;background:rgb(245,245,245);font-family:monospace;text-wrap:wrap;"></pre>`)
                 pre.textContent = v.patches[0].content
@@ -229,7 +242,7 @@ function raw_update() {
                 let h = y - version_ys[p]
                 let px = version_xs[p]
 
-                svg_parent.append(make_html(`<svg height="${h}px" width="${time_dag_width}px" style="position: absolute; top: ${y - h + time_dag_radius}px; left: 0px;">
+                svg_parent.append(make_html(`<svg height="${h}px" width="${time_dag_width}px" style="pointer-events:none; position: absolute; top: ${y - h + time_dag_radius}px; left: 0px;">
                     <line x1="${time_dag_radius + x * (time_dag_width - 2 * time_dag_radius)}px" y1="100%" x2="${time_dag_radius + px * (time_dag_width - 2 * time_dag_radius)}px" y2="0%" stroke="${color}" stroke-width="1px" />
             </svg>`))
             }

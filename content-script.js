@@ -5,6 +5,8 @@ var raw_messages = []
 
 let clear_previous_funcs = []
 
+let on_show_diff = null
+
 function enter_error_state(why) {
   console.log(`enter_error_state because: ${why}`)
   textarea.style.background = 'pink'
@@ -31,11 +33,13 @@ function on_bytes_going_out(params, url) {
 
 // This replaces the page with our "live-update" view of TEXT or JSON
 chrome.runtime.onMessage.addListener(async function (request, sender, sendResponse) {
-  console.log(`getting message with action: ${request.action}`)
-  if (request.action == 'dev_panel_openned') {
+  console.log(`getting message with cmd: ${request.cmd}`)
+  if (request.cmd == 'init') {
     chrome.runtime.sendMessage({ action: "init", headers, versions, raw_messages })
 
-  } else if (request.action == "replace_html") {
+  } else if (request.cmd == "show_diff") {
+    on_show_diff?.(request.from_version)
+  } else if (request.cmd == "reload") {
     // clear previous stuff
     for (let func of clear_previous_funcs) func()
     clear_previous_funcs = []
@@ -57,10 +61,11 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
       <body
           style="padding: 0px; margin: 0px; width: 100vw; height: 100vh; overflow: clip; box-sizing: border-box;"
       >
+          <pre id="diff_d" style="display:none;position: absolute; top: 0px; left: 0px; right: 0px; bottom: 0px;padding: 13px 8px; font-size: 13px;font-family: monospace;overflow:scroll;margin:0px; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word;"></pre>
           <span id="online" style="position: absolute; top: 5px; right: 5px;">•</span>
           <textarea
           id="texty"
-          style="width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box;"
+          style="width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box; background: transparent;"
           readonly
           disabled
           ></textarea>
@@ -121,6 +126,48 @@ async function inject_livetext(subscribe, version, parents) {
   let oplog = new OpLog(peer);
 
   if (!subscribe) textarea.disabled = true
+
+  on_show_diff = (from_version) => {
+    var scrollPos = (window.getComputedStyle(diff_d).display === "none") ? {
+      vertical: textarea.scrollTop,
+      horizontal: textarea.scrollLeft
+    } : {
+      vertical: diff_d.scrollTop,
+      horizontal: diff_d.scrollLeft
+    };
+
+    if (!from_version) {
+      diff_d.style.display = 'none';
+      textarea.style.display = 'block';
+      textarea.scrollTop = scrollPos.vertical
+      textarea.scrollLeft = scrollPos.horizontal
+      return
+    }
+
+    diff_d.style.display = 'block';
+    textarea.style.display = 'none';
+
+    const diffArray = OpLog_diff_from(oplog, [from_version]);
+    diff_d.innerHTML = '';
+    diffArray.forEach(element => {
+      let [status, text] = element;
+      let spanElem = document.createElement('span');
+      switch (status) {
+        case -1:
+          // Deleted text with a red background
+          spanElem.style.backgroundColor = '#ffa8a850';
+          break;
+        case 1:
+          // Inserted text with a green background
+          spanElem.style.backgroundColor = '#a8ffaa50';
+          break;
+      }
+      spanElem.textContent = text;
+      diff_d.appendChild(spanElem);
+    });
+    diff_d.scrollTop = scrollPos.vertical
+    diff_d.scrollLeft = scrollPos.horizontal
+  }
 
   textarea.addEventListener("input", async () => {
     let commonStart = 0;
@@ -446,7 +493,7 @@ async function inject_livejson() {
     try {
       abort_controller = new AbortController()
       let response = await braid.fetch(window.location.href, {
-        signal: abort_controller.signal,        
+        signal: abort_controller.signal,
         subscribe: true,
         headers: { Accept: 'application/json' }
       }, on_bytes_received, on_bytes_going_out)

@@ -1,11 +1,18 @@
 
+console.log(`RUNNING content SCRIPT!`)
+
+var version = null
+var parents = null
+var content_type = null
+
 var headers = {}
 var versions = []
 var raw_messages = []
 
-let clear_previous_funcs = []
-
+let oplog = null
 let on_show_diff = null
+let sub_handler = null
+var default_version_count = 1
 
 function enter_error_state(why) {
   console.log(`enter_error_state because: ${why}`)
@@ -31,32 +38,86 @@ function on_bytes_going_out(params, url) {
   chrome.runtime.sendMessage({ action: "braid_out", data })
 }
 
+window.subscription_online = false
+function set_subscription_online(bool) {
+  if (window.subscription_online === bool) return
+  window.subscription_online = bool
+  console.log(bool ? 'Connected!' : 'Disconnected.')
+  var online = document.querySelector("#online").style
+  if (online) online.color = bool ? 'lime' : 'orange';
+}
+
 // This replaces the page with our "live-update" view of TEXT or JSON
 chrome.runtime.onMessage.addListener(async function (request, sender, sendResponse) {
   console.log(`getting message with cmd: ${request.cmd}`)
   if (request.cmd == 'init') {
     chrome.runtime.sendMessage({ action: "init", headers, versions, raw_messages })
-
   } else if (request.cmd == "show_diff") {
     on_show_diff?.(request.from_version)
   } else if (request.cmd == "reload") {
-    // clear previous stuff
-    for (let func of clear_previous_funcs) func()
-    clear_previous_funcs = []
-
-    console.log(`clearing content, to replace with live updating ${request.content_type}`)
-
-    headers = {}
-    versions = []
-    raw_messages = []
+    console.log('reloading!')
+    location.reload()
+  } else if (request.cmd == 'loaded') {
     chrome.runtime.sendMessage({ action: "init", versions, raw_messages, headers })
 
-    document.body.innerHTML = ''
+    version = request.version
+    parents = request.parents
+    content_type = request.dev_message?.content_type || request.headers['content-type']
+    let white_list = {'text/plain': true, 'application/json': true, 'application/javascript': true, 'text/markdown': true}
 
-    // Text version
-    if (request.content_type === "text/plain") {
-      document.open()
-      document.write(`
+    if (request.dev_message && !request.dev_message.subscribe) return;
+
+    if (request.headers['accept-subscribe'] || (request.dev_message && request.dev_message.subscribe) || (!request.dev_message && white_list[content_type])) {
+      connect()
+    }
+  }
+})
+
+async function connect() {
+  try {
+    var response = await braid_fetch(window.location.href,
+      {
+        subscribe: true,
+        version: version ? JSON.parse(version) : null,
+        parents: (parents ? JSON.parse(`[${parents}]`) : null) || oplog?.getRemoteVersion().map(x => x.join('-')),
+        headers: { Accept: content_type }
+      },
+      (x) => {
+        on_bytes_received(x)
+        set_subscription_online(true)
+      },
+      on_bytes_going_out)
+
+    headers = {}
+    for (let x of response.headers.entries()) headers[x[0].toLowerCase()] = x[1]
+    chrome.runtime.sendMessage({ action: "new_headers", headers })
+
+    if (!headers.subscribe) return;
+
+    if (!sub_handler) {
+      if (headers['content-type'] == 'text/plain') {
+        sub_handler = await create_text_handler()
+      } else if (headers['content-type'] == 'application/json') {
+        sub_handler = await create_json_handler()
+      }
+    }
+
+    response.subscribe(sub_handler, (e) => {
+      console.log(`e = ${e}`);
+      set_subscription_online(false)
+      setTimeout(connect, 1000);
+    })
+  } catch (e) {
+    console.log(`e = ${e}`);
+    set_subscription_online(false)
+    setTimeout(connect, 1000);
+  }
+}
+
+async function create_text_handler() {
+  await new Promise(done => {
+    document.open()
+    document.write(`
       <script src="${chrome.runtime.getURL('braid-http-client.js')}"></script>
       <body
           style="padding: 0px; margin: 0px; width: 100vw; height: 100vh; overflow: clip; box-sizing: border-box;"
@@ -70,40 +131,10 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
           disabled
           ></textarea>
       </body>
-      `);
-      document.close()
-
-      window.braid = { fetch: braid_fetch }
-      await inject_livetext(request.subscribe, request.version, request.parents)
-
-      // JSON version
-    } else if (request.content_type === "application/json") {
-      document.open()
-      document.write(`
-      <script src="${chrome.runtime.getURL('braid-http-client.js')}"></script>
-      <script src="${chrome.runtime.getURL('apply-patch.js')}"></script>
-      <body
-          style="width: 100vw; height: 100vh; overflow: clip; box-sizing: border-box;"
-      >
-        <span id="online" style="position: absolute; top: 5px; right: 5px;">•</span>
-        <code
-          id="texty"
-          style="width: 100%; height:100%; font-size: 13px;"
-          readonly
-        ></code>
-      </body>
-      `)
-      document.close()
-
-      window.braid = { fetch: braid_fetch }
-      window.onload = () => inject_livejson()
-    }
-  }
-})
-
-async function inject_livetext(subscribe, version, parents) {
-  let is_stopped = false
-  clear_previous_funcs.push(() => is_stopped = true)
+    `);
+    document.close()
+    window.onload = () => done()
+  })
 
   let response = await fetch(chrome.runtime.getURL('dt_bg.wasm'))
   let wasmModuleBuffer = await response.arrayBuffer();
@@ -123,9 +154,7 @@ async function inject_livetext(subscribe, version, parents) {
 
   let textarea = document.querySelector("#texty");
 
-  let oplog = new OpLog(peer);
-
-  if (!subscribe) textarea.disabled = true
+  oplog = new OpLog(peer);
 
   on_show_diff = (from_version) => {
     var scrollPos = (window.getComputedStyle(diff_d).display === "none") ? {
@@ -223,9 +252,9 @@ async function inject_livetext(subscribe, version, parents) {
       let waitTime = 100;
 
       const fetchWithRetry = async (url, options) => {
-        while (!is_stopped) {
+        while (true) {
           try {
-            let x = await braid.fetch(url, { ...options }, on_bytes_received, on_bytes_going_out)
+            let x = await braid_fetch(url, { ...options }, on_bytes_received, on_bytes_going_out)
             if (x.status !== 200) throw 'status not 200: ' + x.status
 
             let got = await x.text();
@@ -275,159 +304,6 @@ async function inject_livetext(subscribe, version, parents) {
     }
   });
 
-  window.subscription_online = false
-  function set_subscription_online(bool) {
-    if (subscription_online === bool) return
-    subscription_online = bool
-    console.log(bool ? 'Connected!' : 'Disconnected.')
-    var online = document.querySelector("#online").style
-    online.color = bool ? 'lime' : 'orange';
-  }
-
-  if (!subscribe) online.color = 'rgba(0,0,0,0)'
-
-  let abort_controller = null
-  clear_previous_funcs.push(() => abort_controller?.abort())
-
-  async function connect() {
-    if (is_stopped) return;
-    try {
-      abort_controller = new AbortController()
-      var response = await braid.fetch(window.location.href,
-        {
-          signal: abort_controller.signal,
-          subscribe,
-          version: version ? JSON.parse(version) : null,
-          parents: (parents ? JSON.parse(`[${parents}]`) : null) || (subscribe && oplog.getRemoteVersion().map(x => x.join('-'))),
-          headers: { Accept: 'text/plain' }
-        },
-        (x) => {
-          on_bytes_received(x)
-          set_subscription_online(true)
-        },
-        on_bytes_going_out)
-
-      headers = {}
-      for (let x of response.headers.entries()) headers[x[0].toLowerCase()] = x[1]
-      chrome.runtime.sendMessage({ action: "new_headers", headers })
-
-      if (!subscribe) {
-        let s = await response.text()
-        on_bytes_received(s)
-        textarea.value = s
-      }
-
-      if (subscribe) response.subscribe(({ version, parents, body, patches }) => {
-        // chrome.runtime.sendMessage({ action: "braid_in", data: { version, parents, body, patches } });
-
-        if (textarea.hasAttribute("readonly")) {
-          textarea.removeAttribute("readonly")
-          textarea.removeAttribute('disabled')
-          // textarea.focus()
-        }
-
-        if (!patches) {
-          let new_version = {
-            method: "GET",
-            version,
-            parents,
-            patches: [{ unit: 'text', range: '[0:0]', content: '' }]
-          }
-          versions.push(new_version)
-          chrome.runtime.sendMessage({ action: "new_version", version: new_version })
-          return;
-        }
-
-        let new_version = {
-          method: "GET",
-          version,
-          parents,
-          patches
-        }
-        versions.push(new_version)
-        chrome.runtime.sendMessage({ action: "new_version", version: new_version })
-
-        let v = oplog.getLocalVersion();
-
-        try {
-          let range = patches[0].range.match(/\d+/g).map((x) => parseInt(x));
-
-          version = decode_version(version)
-          version[1] -= (patches[0].content ? patches[0].content.length : range[1] - range[0]) - 1
-          version = version.join('-')
-
-          if (patches[0].content) {
-            // insert
-            let v = version
-            let ps = parents
-            for (let i = 0; i < patches[0].content.length; i++) {
-              let c = patches[0].content[i]
-              oplog.addFromBytes(
-                OpLog_create_bytes(
-                  v,
-                  ps,
-                  range[0] + i,
-                  c
-                )
-              );
-              ps = [v]
-              v = decode_version(v)
-              v = [v[0], v[1] + 1].join('-')
-            }
-          } else {
-            // delete
-            let v = version
-            let ps = parents
-            for (let i = range[0]; i < range[1]; i++) {
-              oplog.addFromBytes(
-                OpLog_create_bytes(
-                  v,
-                  ps,
-                  range[0],
-                  null
-                )
-              );
-              ps = [v]
-              v = decode_version(v)
-              v = [v[0], v[1] + 1].join('-')
-            }
-          }
-        } catch (e) {
-          errorify(e)
-        }
-        let sel = [textarea.selectionStart, textarea.selectionEnd];
-
-        if (textarea.value != last_text) {
-          errorify("textarea out of sync somehow!")
-        }
-
-        // work here
-        // console.log(`op log = ${JSON.stringify(oplog.getXFSince(v), null, 4)}`)
-
-        let [new_text, new_sel] = applyChanges(
-          textarea.value,
-          sel,
-          oplog.getXFSince(v)
-        );
-
-        textarea.value = last_text = new_text;
-        textarea.selectionStart = new_sel[0];
-        textarea.selectionEnd = new_sel[1];
-      },
-        (e) => {
-          console.log(`e = ${e}`);
-          set_subscription_online(false)
-          setTimeout(connect, 1000);
-        }
-      )
-    } catch (e) {
-      console.log(`e = ${e}`);
-      set_subscription_online(false)
-      setTimeout(connect, 1000);
-    }
-  }
-  connect();
-
   function applyChanges(original, sel, changes) {
     for (var change of changes) {
       switch (change.kind) {
@@ -462,105 +338,174 @@ async function inject_livetext(subscribe, version, parents) {
     }
     return [original, sel];
   }
+
+  return ({ version, parents, body, patches }) => {
+    if (textarea.hasAttribute("readonly")) {
+      textarea.removeAttribute("readonly")
+      textarea.removeAttribute('disabled')
+      // textarea.focus()
+    }
+
+    if (!patches) {
+      let new_version = {
+        method: "GET",
+        version,
+        parents,
+        patches: [{ unit: 'text', range: '[0:0]', content: '' }]
+      }
+      versions.push(new_version)
+      chrome.runtime.sendMessage({ action: "new_version", version: new_version })
+      return;
+    }
+
+    let new_version = {
+      method: "GET",
+      version,
+      parents,
+      patches
+    }
+    versions.push(new_version)
+    chrome.runtime.sendMessage({ action: "new_version", version: new_version })
+
+    let v = oplog.getLocalVersion();
+
+    try {
+      let range = patches[0].range.match(/\d+/g).map((x) => parseInt(x));
+
+      version = decode_version(version)
+      version[1] -= (patches[0].content ? patches[0].content.length : range[1] - range[0]) - 1
+      version = version.join('-')
+
+      if (patches[0].content) {
+        // insert
+        let v = version
+        let ps = parents
+        for (let i = 0; i < patches[0].content.length; i++) {
+          let c = patches[0].content[i]
+          oplog.addFromBytes(
+            OpLog_create_bytes(
+              v,
+              ps,
+              range[0] + i,
+              c
+            )
+          );
+          ps = [v]
+          v = decode_version(v)
+          v = [v[0], v[1] + 1].join('-')
+        }
+      } else {
+        // delete
+        let v = version
+        let ps = parents
+        for (let i = range[0]; i < range[1]; i++) {
+          oplog.addFromBytes(
+            OpLog_create_bytes(
+              v,
+              ps,
+              range[0],
+              null
+            )
+          );
+          ps = [v]
+          v = decode_version(v)
+          v = [v[0], v[1] + 1].join('-')
+        }
+      }
+    } catch (e) {
+      errorify(e)
+    }
+    let sel = [textarea.selectionStart, textarea.selectionEnd];
+
+    if (textarea.value != last_text) {
+      errorify("textarea out of sync somehow!")
+    }
+
+    // work here
+    // console.log(`op log = ${JSON.stringify(oplog.getXFSince(v), null, 4)}`)
+
+    let [new_text, new_sel] = applyChanges(
+      textarea.value,
+      sel,
+      oplog.getXFSince(v)
+    );
+
+    textarea.value = last_text = new_text;
+    textarea.selectionStart = new_sel[0];
+    textarea.selectionEnd = new_sel[1];
+  }
 }
 
-var default_version_count = 1
-async function inject_livejson() {
-  let is_stopped = false
-  clear_previous_funcs.push(() => is_stopped = true)
+async function create_json_handler() {
+  await new Promise(done => {
+    document.open()
+    document.write(`
+      <script src="${chrome.runtime.getURL('braid-http-client.js')}"></script>
+      <script src="${chrome.runtime.getURL('apply-patch.js')}"></script>
+      <body
+          style="width: 100vw; height: 100vh; overflow: clip; box-sizing: border-box;"
+      >
+        <span id="online" style="position: absolute; top: 5px; right: 5px;">•</span>
+        <code
+          id="texty"
+          style="width: 100%; height:100%; font-size: 13px;"
+          readonly
+        ></code>
+      </body>
+    `);
+    document.close()
+    window.onload = () => done()
+  })
 
   let doc = null;
 
   let sent_count = 0;
   let ack_count = 0;
 
-  let textarea = document.querySelector("#texty");
+  return ({ version, parents, body, patches }) => {
+    console.log(
+      `v = ${JSON.stringify(
+        { version, parents, body, patches },
+        null,
+        4
+      )}`
+    );
 
-  window.subscription_online = false
-  function set_subscription_online(bool) {
-    if (subscription_online === bool) return
-    subscription_online = bool
-    console.log(bool ? 'Connected!' : 'Disconnected.')
-    var online = document.querySelector("#online").style
-    online.color = bool ? 'lime' : 'orange';
-  }
+    if (!version) version = 'default-' + default_version_count++
+    if (!parents) parents = []
 
-  let abort_controller = null
-  clear_previous_funcs.push(() => abort_controller?.abort())
-
-  async function connect() {
-    if (is_stopped) return;
     try {
-      abort_controller = new AbortController()
-      let response = await braid.fetch(window.location.href, {
-        signal: abort_controller.signal,
-        subscribe: true,
-        headers: { Accept: 'application/json' }
-      }, on_bytes_received, on_bytes_going_out)
+      let new_version = {
+        method: "GET",
+        version,
+        parents,
+        patches
+      }
 
-      headers = {}
-      for (let x of response.headers.entries()) headers[x[0].toLowerCase()] = x[1]
-      chrome.runtime.sendMessage({ action: "new_headers", headers })
+      if (body != null) {
+        doc = JSON.parse(body)
 
-      response.subscribe(
-        ({ version, parents, body, patches }) => {
-          set_subscription_online(true)
-          console.log(
-            `v = ${JSON.stringify(
-              { version, parents, body, patches },
-              null,
-              4
-            )}`
-          );
+        new_version.patches = [{
+          unit: 'json',
+          range: '',
+          content: body
+        }]
+      } else {
+        doc = apply_patch(doc, patches[0].range, JSON.parse(patches[0].content))
+      }
 
-          if (!version) version = 'default-' + default_version_count++
-          if (!parents) parents = []
-
-          try {
-            let new_version = {
-              method: "GET",
-              version,
-              parents,
-              patches
-            }
-
-            if (body != null) {
-              doc = JSON.parse(body)
-
-              new_version.patches = [{
-                unit: 'json',
-                range: '',
-                content: body
-              }]
-            } else {
-              doc = apply_patch(doc, patches[0].range, JSON.parse(patches[0].content))
-            }
-
-            versions.push(new_version)
-            chrome.runtime.sendMessage({ action: "new_version", version: new_version })
-          } catch (e) {
-            console.log(`eeee = ${e}`)
-            console.log(`eeee = ${e.stack}`)
-
-            doc = apply_patch(doc, patches[0].range, JSON.parse(patches[0].content))
-
-            // location.reload()
-          }
-          textarea.innerText = JSON.stringify(doc)
-        },
-        (e) => {
-          console.log(`e = ${e}`);
-          set_subscription_online(false)
-          setTimeout(connect, 1000);
-        }
-      );
+      versions.push(new_version)
+      chrome.runtime.sendMessage({ action: "new_version", version: new_version })
     } catch (e) {
-      console.log(`e = ${e}`);
-      set_subscription_online(false)
-      setTimeout(connect, 1000);
+      console.log(`eeee = ${e}`)
+      console.log(`eeee = ${e.stack}`)
+
+      doc = apply_patch(doc, patches[0].range, JSON.parse(patches[0].content))
+
+      // location.reload()
     }
+    document.querySelector("#texty").innerText = JSON.stringify(doc)
   }
-  connect();
 }
 
 function constructHTTPRequest(params, url) {

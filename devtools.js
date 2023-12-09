@@ -1,6 +1,6 @@
 
 chrome.devtools.panels.create(
-    "Braid",
+    "History",
     "128.png",
     "panel.html",
     function(panel) {

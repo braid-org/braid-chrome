@@ -43,8 +43,8 @@ function connect() {
         if (subscribe_request.checked) {
             version_request.value = ''
             parents_request.value = ''
-            tell_page_to_load_new_content_type()
         }
+        tell_page_to_load_new_content_type()
     }
 
     version_request.oninput = update_show_resubmit

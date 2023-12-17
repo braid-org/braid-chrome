@@ -43,7 +43,7 @@ function set_subscription_online(bool) {
   if (window.subscription_online === bool) return
   window.subscription_online = bool
   console.log(bool ? 'Connected!' : 'Disconnected.')
-  var online = document.querySelector("#online").style
+  var online = document.querySelector("#online")?.style
   if (online) online.color = bool ? 'lime' : 'orange';
 }
 
@@ -63,7 +63,7 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
     version = request.version
     parents = request.parents
     content_type = request.dev_message?.content_type || request.headers['content-type']
-    let white_list = {'text/plain': true, 'application/json': true, 'application/javascript': true, 'text/markdown': true}
+    let white_list = { 'text/plain': true, 'application/json': true, 'application/javascript': true, 'text/markdown': true }
 
     if (request.dev_message && !request.dev_message.subscribe) return;
 
@@ -95,9 +95,9 @@ async function connect() {
     if (!headers.subscribe) return;
 
     if (!sub_handler) {
-      if (headers['content-type'] == 'text/plain') {
-        sub_handler = await create_text_handler()
-      } else if (headers['content-type'] == 'application/json') {
+      if (content_type == 'text/plain') {
+        sub_handler = await create_text_handler(response.headers.editable == 'true')
+      } else if (content_type == 'application/json') {
         sub_handler = await create_json_handler()
       }
     }
@@ -114,7 +114,7 @@ async function connect() {
   }
 }
 
-async function create_text_handler() {
+async function create_text_handler(editable) {
   await new Promise(done => {
     document.open()
     document.write(`
@@ -124,12 +124,17 @@ async function create_text_handler() {
       >
           <pre id="diff_d" style="display:none;position: absolute; top: 0px; left: 0px; right: 0px; bottom: 0px;padding: 13px 8px; font-size: 13px;font-family: monospace;overflow:scroll;margin:0px; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word;"></pre>
           <span id="online" style="position: absolute; top: 5px; right: 5px;">•</span>
-          <textarea
+          ${editable ? `<textarea
           id="texty"
           style="width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box; background: transparent;"
           readonly
           disabled
-          ></textarea>
+          ></textarea>` : `<pre
+          id="texty"
+          style="width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box; background: transparent;"
+          readonly
+          disabled
+          ></pre>`}
       </body>
     `);
     document.close()

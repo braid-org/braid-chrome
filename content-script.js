@@ -96,7 +96,7 @@ async function connect() {
 
     if (!sub_handler) {
       if (content_type == 'text/plain') {
-        sub_handler = await create_text_handler(response.headers.editable == 'true')
+        sub_handler = await create_text_handler(headers.editable == 'true')
       } else if (content_type == 'application/json') {
         sub_handler = await create_json_handler()
       }

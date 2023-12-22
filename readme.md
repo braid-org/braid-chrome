@@ -13,6 +13,8 @@ Features:
   - View and navigate version history
   - Edit the current page
 
+See the release [Demo Video](https://braid.org/video/https://invisiblecollege.s3.us-west-1.amazonaws.com/braid-meeting-75.mp4#1479) from [Braid Meeting 75](https://braid.org/meeting-75).
+
 ## Installation
 
 1. `git clone https://github.com/braid-org/braid-chrome.git`

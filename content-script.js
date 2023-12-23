@@ -60,10 +60,15 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
   } else if (request.cmd == 'loaded') {
     chrome.runtime.sendMessage({ action: "init", versions, raw_messages, headers })
 
-    version = request.version
-    parents = request.parents
+    version = request.dev_message?.version
+    parents = request.dev_message?.parents
     content_type = request.dev_message?.content_type || request.headers['content-type']
     let white_list = { 'text/plain': true, 'application/json': true, 'application/javascript': true, 'text/markdown': true }
+
+    if (version || parents) {
+      await create_static_view()
+      return
+    } 
 
     if (request.dev_message && !request.dev_message.subscribe) return;
 
@@ -72,6 +77,52 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
     }
   }
 })
+
+async function create_static_view() {
+  await new Promise(done => {
+    document.open()
+    document.write(`
+      <script src="${chrome.runtime.getURL('braid-http-client.js')}"></script>
+      <body
+          style="padding: 0px; margin: 0px; width: 100vw; height: 100vh; overflow: clip; box-sizing: border-box;"
+      >
+          <span id="online" style="position: absolute; top: 5px; right: 5px;">•</span>
+          <pre
+          id="texty"
+          style="margin-top: 0px; width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box; background: transparent;"
+          readonly
+          disabled
+          ></pre>
+      </body>
+    `);
+    document.close()
+    window.onload = () => done()
+  })
+
+  try {
+    var response = await braid_fetch(window.location.href,
+      {
+        version: version ? JSON.parse(version) : null,
+        parents: parents ? JSON.parse(`[${parents}]`) : null,
+        headers: { Accept: content_type }
+      },
+      (x) => {
+        on_bytes_received(x)
+        set_subscription_online(true)
+      },
+      on_bytes_going_out)
+
+    headers = {}
+    for (let x of response.headers.entries()) headers[x[0].toLowerCase()] = x[1]
+    chrome.runtime.sendMessage({ action: "new_headers", headers })
+
+    texty.textContent = await response.text()
+  } catch (e) {
+    console.log(`e = ${e}`);
+    set_subscription_online(false)
+    setTimeout(connect, 1000);
+  }
+}
 
 async function connect() {
   try {
@@ -131,7 +182,7 @@ async function create_text_handler(editable) {
           disabled
           ></textarea>` : `<pre
           id="texty"
-          style="width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box; background: transparent;"
+          style="margin: 0px; width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box; background: transparent;"
           readonly
           disabled
           ></pre>`}

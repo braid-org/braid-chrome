@@ -1315,9 +1315,15 @@ function OpLog_create_bytes(version, parents, pos, ins) {
         inserted_content_bytes.push(0); // ins (not del, which is 1)
 
         inserted_content_bytes.push(13); // "content" enum (rather than compressed)
-        inserted_content_bytes.push(2); // length of content chunk
+
+        let encoder = new TextEncoder();
+        let utf8Bytes = encoder.encode(ins);
+
+        inserted_content_bytes.push(1 + utf8Bytes.length); // length of content chunk
         inserted_content_bytes.push(4); // "plain text" enum
-        inserted_content_bytes.push(ins.charCodeAt(0)); // actual text
+
+        for (let b of utf8Bytes)
+            inserted_content_bytes.push(b); // actual text
 
         inserted_content_bytes.push(25); // "known" enum
         inserted_content_bytes.push(1); // length of "known" chunk

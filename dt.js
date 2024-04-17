@@ -1629,6 +1629,10 @@ function parseDT(byte_array) {
     return [agents, versions, parentss];
 }
 
+function encode_version(agent, seq) {
+    return agent + "-" + seq
+}
+
 function decode_version(v) {
     let a = v.split('-')
     if (a.length > 1) a[1] = parseInt(a[1])

@@ -21,6 +21,10 @@
       height: 100vh;
     "
   >
+    <!-- Error div -->
+    <div id="error-container" style="background-color: #ffcccc; padding: 10px; display: none;">
+      <pre id="error-message" style="margin: 0;"></pre>
+    </div>
 
     <!-- The Messages -->
     <div id="messages"
@@ -84,8 +88,12 @@
           </select>
           <span id="content_type_response"></span>
 
-          <span>Merge-Type:</span>
-          <span></span>
+          <label for="merge_type_select" style='text-wrap:nowrap'>Merge-Type:</label>
+          <select id="merge_type_select" style="width:90px">
+            <option value="">&nbsp;</option>
+            <option value="dt">dt</option>
+            <option value="simpleton">simpleton</option>
+          </select>
           <span id="merge_type_response"></span>
 
           <label for="subscribe_request">Subscribe:</label>

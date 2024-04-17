@@ -1,3 +1,10 @@
+// Error handling
+window.onerror = function (message, source, lineno, colno, error) {
+    const errorContainer = document.getElementById('error-container');
+    const errorMessageElement = document.getElementById('error-message');
+    errorMessageElement.textContent = error.stack;
+    errorContainer.style.display = 'block';
+};
 
 let versions = []
 let raw_messages = []
@@ -21,19 +28,16 @@ function connect() {
     backgroundConnection.postMessage({ cmd: 'init', tab_id: chrome.devtools.inspectedWindow.tabId })
 
     function tell_page_to_load_new_content_type() {
-        try {
-            backgroundConnection.postMessage({ cmd: "reload", content_type: content_type_select.value, subscribe: subscribe_request.checked, ...(version_request.value ? { version: version_request.value } : {}), ...(parents_request.value ? { parents: parents_request.value } : {}) });
+        backgroundConnection.postMessage({ cmd: "reload", content_type: content_type_select.value, merge_type: merge_type_select.value, subscribe: subscribe_request.checked, ...(version_request.value ? { version: version_request.value } : {}), ...(parents_request.value ? { parents: parents_request.value } : {}) });
 
-            last_version = version_request.value
-            last_parents = parents_request.value
-            update_show_resubmit()
-        } catch (e) {
-            alert(`e = ${e.stack}`)
-        }
+        last_version = version_request.value
+        last_parents = parents_request.value
+        update_show_resubmit()
     }
 
     resubmit_button.onclick = tell_page_to_load_new_content_type
     content_type_select.onchange = tell_page_to_load_new_content_type
+    merge_type_select.onchange = tell_page_to_load_new_content_type
 
     backgroundConnection.onDisconnect.addListener(() => setTimeout(connect, 500));
 
@@ -130,8 +134,10 @@ function raw_update() {
             let seen = {}
             let good_versions = []
             for (let v of versions) {
-                if (seen[v.version]) continue
-                seen[v.version] = true
+                let v_string = '' + v.version
+
+                if (seen[v_string]) continue
+                seen[v_string] = true
                 good_versions.push(v)
             }
             versions = good_versions
@@ -139,55 +145,67 @@ function raw_update() {
 
         for (let i = 0; i < versions.length; i++) {
             let v = versions[i]
+            let v_string = '' + v.version
             let last = i == versions.length - 1
-
-            for (let i = 0; i < 6; i++) {
-                id_messages.append(make_html(`<div style="width:10px;height:10px"></div>`))
-            }
-
-            let actor = v.version.split('-')[0]
-            if (!actor_to_color[actor]) {
-                let angle = get_new_angle(actor_color_angles)
-                actor_color_angles.push(angle)
-                actor_to_color[actor] = angle_to_color(angle)
-            }
 
             let my_make_html = (s) => {
                 let d = make_html(s)
                 d.style.cursor = 'pointer'
                 d.onclick = () => {
-                    backgroundConnection.postMessage({ cmd: "show_diff", from_version: !last ? v.version : null });
+                    backgroundConnection.postMessage({ cmd: "show_diff", from_version: !last ? v_string : null });
                 }
                 return d
             }
 
-            let version_circle = my_make_html(`<div style="
-                position: relative;
-                display: block;
-                vertical-align: middle;
-                width: ${time_dag_width}px;
-                height: ${time_dag_radius * 2}px;
-                background-color: transparent;
-                padding-right:10px;"></div>`)
-            version_circles[v.version] = version_circle
-            id_messages.append(version_circle)
-            if (!svg_parent) svg_parent = version_circle
+            for (let ii = 0; ii < v.patches.length; ii++) {
+                let patch = v.patches[ii]
 
-            id_messages.append(my_make_html(`<div style="padding-right:10px;color:${actor_to_color[actor]}">${v.version}</div>`))
-            id_messages.append(my_make_html(`<div><div style="color:black;background:rgb(245,245,245);font-family:monospace;padding-right:10px">${v.patches[0].unit}</div></div>`))
-            id_messages.append(my_make_html(`<div style="font-family:monospace;padding-right:10px">${v.patches[0].unit == 'text' ? v.patches[0].range.slice(1, -1) : v.patches[0].range}</div>`))
+                for (let i = 0; i < 6; i++) {
+                    id_messages.append(make_html(`<div style="width:10px;height:10px"></div>`))
+                }
 
-            id_messages.append(my_make_html(`<div style="padding-right:10px">=</div>`))
+                if (ii == 0) {
+                    let actor = v_string.split('-')[0]
+                    if (!actor_to_color[actor]) {
+                        let angle = get_new_angle(actor_color_angles)
+                        actor_color_angles.push(angle)
+                        actor_to_color[actor] = angle_to_color(angle)
+                    }
 
-            let container = my_make_html(`<div style="padding-right:10px"></div>`)
-            if (v.patches[0].content) {
-                let pre = make_html(`<pre style="padding:0px;margin:0px;color:black;background:rgb(245,245,245);font-family:monospace;text-wrap:wrap;"></pre>`)
-                pre.textContent = v.patches[0].content
-                container.append(pre)
-            } else {
-                container.append(make_html(`<div style="display:inline-block;padding:2px;border-radius:3px;background:rgb(241, 64, 42);color:white;font-size:xx-small;padding-left:3px;padding-right:3px">deleted</div>`))
+                    let version_circle = my_make_html(`<div style="
+                        position: relative;
+                        display: block;
+                        vertical-align: middle;
+                        width: ${time_dag_width}px;
+                        height: ${time_dag_radius * 2}px;
+                        background-color: transparent;
+                        padding-right:10px;"></div>`)
+                    version_circles[v_string] = version_circle
+                    id_messages.append(version_circle)
+                    if (!svg_parent) svg_parent = version_circle
+
+                    id_messages.append(my_make_html(`<div style="padding-right:10px;color:${actor_to_color[actor]}">${v_string}</div>`))
+                } else {
+                    for (let i = 0; i < 2; i++) {
+                        id_messages.append(make_html(`<div style="width:10px;height:10px"></div>`))
+                    }
+                }
+
+                id_messages.append(my_make_html(`<div><div style="color:black;background:rgb(245,245,245);font-family:monospace;padding-right:10px">${patch.unit}</div></div>`))
+                id_messages.append(my_make_html(`<div style="font-family:monospace;padding-right:10px">${patch.unit == 'text' ? patch.range.slice(1, -1) : patch.range}</div>`))
+
+                id_messages.append(my_make_html(`<div style="padding-right:10px">=</div>`))
+
+                let container = my_make_html(`<div style="padding-right:10px"></div>`)
+                if (patch.content) {
+                    let pre = make_html(`<pre style="padding:0px;margin:0px;color:black;background:rgb(245,245,245);font-family:monospace;text-wrap:wrap;"></pre>`)
+                    pre.textContent = patch.content
+                    container.append(pre)
+                } else {
+                    container.append(make_html(`<div style="display:inline-block;padding:2px;border-radius:3px;background:rgb(241, 64, 42);color:white;font-size:xx-small;padding-left:3px;padding-right:3px">deleted</div>`))
+                }
+                id_messages.append(container)
             }
-            id_messages.append(container)
         }
         id_messages.append(make_html(`<div style="width:10px;height:10px"></div>`))
 
@@ -199,19 +217,21 @@ function raw_update() {
 
         let actor_to_seq = {}
         for (let v of versions) {
-            let rect = version_circles[v.version].getBoundingClientRect()
+            let v_string = '' + v.version
+
+            let rect = version_circles[v_string].getBoundingClientRect()
             let y = (rect.y + rect.height / 2) - py
 
-            version_ys[v.version] = y
+            version_ys[v_string] = y
 
-            v_to_realv[v.version] = v.version
+            v_to_realv[v_string] = v_string
 
-            if (v.version == 'root') continue;
+            if (v_string == 'root') continue;
 
-            let [actor, seq] = v.version.split('-')
+            let [actor, seq] = v_string.split('-')
             seq = 1 * seq
             for (let i = actor_to_seq[actor] ?? 0; i < seq; i++) {
-                v_to_realv[actor + '-' + i] = v.version
+                v_to_realv[actor + '-' + i] = v_string
             }
             actor_to_seq[actor] = seq + 1
         }
@@ -222,22 +242,24 @@ function raw_update() {
         let last_v = null
 
         for (let v of versions) {
-            let actor = v.version.split('-')[0]
+            let v_string = '' + v.version
+
+            let actor = v_string.split('-')[0]
             let color = actor_to_color[actor]
 
             let x = null
-            if (v.parents.length == 0 || (v.parents.length == 1 && v_to_realv[v.parents[0]] == last_v)) {
+            if (!v.parents || v.parents.length == 0 || (v.parents.length == 1 && v_to_realv[v.parents[0]] == last_v)) {
                 x = last_x
             } else {
-                let r = parseInt(v.version[0], 36) / 35
+                let r = parseInt(v_string, 36) / 35
                 x = last_x + last_x_shadow_r + r * (1 - 2 * last_x_shadow_r)
                 if (x > 1) x -= 1
             }
-            version_xs[v.version] = x
+            version_xs[v_string] = x
 
-            let y = version_ys[v.version]
+            let y = version_ys[v_string]
 
-            for (let p of v.parents) {
+            for (let p of (v.parents ?? [])) {
                 p = v_to_realv[p]
                 let h = y - version_ys[p]
                 let px = version_xs[p]
@@ -247,30 +269,32 @@ function raw_update() {
             </svg>`))
             }
 
-            last_v = v.version
+            last_v = v_string
         }
 
         for (let v of versions) {
-            let actor = v.version.split('-')[0]
+            let v_string = '' + v.version
+
+            let actor = v_string.split('-')[0]
             let color = actor_to_color[actor]
 
             let x = null
-            if (v.parents.length == 0 || (v.parents.length == 1 && v_to_realv[v.parents[0]] == last_v)) {
+            if (!v.parents || v.parents.length == 0 || (v.parents.length == 1 && v_to_realv[v.parents[0]] == last_v)) {
                 x = last_x
             } else {
-                let r = parseInt(v.version[0], 36) / 35
+                let r = parseInt(v_string[0], 36) / 35
                 x = last_x + last_x_shadow_r + r * (1 - 2 * last_x_shadow_r)
                 if (x > 1) x -= 1
             }
-            version_xs[v.version] = x
+            version_xs[v_string] = x
 
-            let y = version_ys[v.version]
+            let y = version_ys[v_string]
 
             svg_parent.append(make_html(`<svg height="${time_dag_radius * 2}px" width="${time_dag_radius * 2}px" style="position: absolute; top: ${y}px; left: ${x * (time_dag_width - 2 * time_dag_radius)}px;">
                     <circle cx="50%" cy="50%" r="50%" stroke-width="0" fill="${color}" />
             </svg>`))
 
-            last_v = v.version
+            last_v = v_string
         }
 
         // let dd = make_html('<pre></pre>')

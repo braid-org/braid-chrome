@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Braid Chrome Extension",
-  "version": "0.0.196",
+  "version": "0.0.197",
   "permissions": [
     "activeTab",
     "tabs",
@@ -42,7 +42,6 @@
     {
       "resources": [
         "dt_bg.wasm",
-        "inject.html",
         "braid-http-client.js",
         "myers-diff1.js",
         "apply-patch.js"

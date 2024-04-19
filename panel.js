@@ -251,7 +251,7 @@ function raw_update() {
             if (!v.parents || v.parents.length == 0 || (v.parents.length == 1 && v_to_realv[v.parents[0]] == last_v)) {
                 x = last_x
             } else {
-                let r = parseInt(v_string, 36) / 35
+                let r = parseInt(v_string[0], 36) / 35
                 x = last_x + last_x_shadow_r + r * (1 - 2 * last_x_shadow_r)
                 if (x > 1) x -= 1
             }
@@ -260,13 +260,14 @@ function raw_update() {
             let y = version_ys[v_string]
 
             for (let p of (v.parents ?? [])) {
+                let pointing_to_subversion = v_to_realv[p] != p
                 p = v_to_realv[p]
                 let h = y - version_ys[p]
                 let px = version_xs[p]
 
                 svg_parent.append(make_html(`<svg height="${h}px" width="${time_dag_width}px" style="pointer-events:none; position: absolute; top: ${y - h + time_dag_radius}px; left: 0px;">
-                    <line x1="${time_dag_radius + x * (time_dag_width - 2 * time_dag_radius)}px" y1="100%" x2="${time_dag_radius + px * (time_dag_width - 2 * time_dag_radius)}px" y2="0%" stroke="${color}" stroke-width="1px" />
-            </svg>`))
+                        <line x1="${time_dag_radius + x * (time_dag_width - 2 * time_dag_radius)}px" y1="100%" x2="${time_dag_radius + px * (time_dag_width - 2 * time_dag_radius)}px" y2="0%" stroke="${color}" stroke-width="1px" ${pointing_to_subversion ? 'stroke-dasharray="3,3"' : ''} />
+                </svg>`))
             }
 
             last_v = v_string

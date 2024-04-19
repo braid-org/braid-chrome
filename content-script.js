@@ -15,6 +15,8 @@ var default_version_count = 1
 var on_show_diff = () => { }
 var get_parents = () => []
 
+var abort_controller = new AbortController();
+
 window.errorify = (msg) => {
   console.log(`errorify: ${msg}`)
   let textarea = document.getElementById('textarea')
@@ -57,6 +59,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     on_show_diff(request.from_version)
   } else if (request.cmd == "reload") {
     console.log('reloading!')
+    abort_controller.abort()
     location.reload()
   } else if (request.cmd == 'loaded') {
     chrome.runtime.sendMessage({ action: "init", versions, raw_messages, headers })
@@ -106,7 +109,8 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
         subscribe,
         version: !subscribe ? (version ? JSON.parse(`[${version}]`) : null) : null,
         parents: !subscribe ? (parents ? JSON.parse(`[${parents}]`) : null) : () => get_parents(),
-        headers: { Accept: content_type, ...(merge_type ? { ['Merge-Type']: merge_type } : {}) }
+        headers: { Accept: content_type, ...(merge_type ? { ['Merge-Type']: merge_type } : {}) },
+        signal: abort_controller.signal
       })
 
     headers = {}

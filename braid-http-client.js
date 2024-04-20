@@ -1,13 +1,12 @@
-var peer = Math.random().toString(36).slice(2, 7)
+// var peer = Math.random().toString(36).substr(2)
 
 // ***************************
 // http
 // ***************************
 
-function braidify_http(http) {
-    // Todo:  Wrap .put to add `peer` header
+function braidify_http (http) {
     http.normal_get = http.get
-    http.get = function braid_req(arg1, arg2, arg3) {
+    http.get = function braid_req (arg1, arg2, arg3) {
         var url, options, cb
 
         // http.get() supports two forms:
@@ -45,8 +44,8 @@ function braidify_http(http) {
         if (options.subscribe)
             options.headers.subscribe = 'true'
 
-        // Always add the `peer` header
-        options.headers.peer = options.headers.peer || peer
+        // // Always add the `peer` header
+        // options.headers.peer = options.headers.peer || peer
 
         // Wrap the callback to provide our new .on('update', ...) feature
         // on nodejs servers
@@ -59,7 +58,7 @@ function braidify_http(http) {
 
                 // Define .on('update', cb)
                 if (key === 'update'
-                    || key === 'version' /* Deprecated API calls it 'version' */) {
+                    || key === 'version' /* Deprecated API calls it 'version' */ ) {
 
                     // If we have an 'update' handler, let's remember it
                     on_update = f
@@ -89,7 +88,7 @@ function braidify_http(http) {
             }
             orig_cb && orig_cb(res)
         }
-
+            
         // Now put the parameters back in their prior order and call the
         // underlying .get() function
         if (url) {
@@ -141,10 +140,10 @@ if (is_nodejs) {
     // window.fetch = braid_fetch
 }
 
-async function braid_fetch(url, params = {},
+async function braid_fetch (url, params = {},
     // These params are for debugging:
     on_bytes_received, on_bytes_sent) {
-    params = { ...params }  // Copy params, because we'll mutate it
+    params = {...params}  // Copy params, because we'll mutate it
 
     // Initialize the headers object
     if (!params.headers)
@@ -160,8 +159,8 @@ async function braid_fetch(url, params = {},
         console.assert(Array.isArray(params.parents),
                        'fetch(): `parents` must be an array')
 
-    // Always set the peer
-    params.headers.set('peer', peer)
+    // // Always set the peer
+    // params.headers.set('peer', peer)
 
     // We provide some shortcuts for Braid params
     if (params.version)
@@ -170,6 +169,8 @@ async function braid_fetch(url, params = {},
         params.headers.set('parents', params.parents.map(JSON.stringify).join(', '))
     if (params.subscribe)
         params.headers.set('subscribe', 'true')
+    if (params.peer)
+        params.headers.set('peer', params.peer)
 
     // Prevent browsers from going to disk cache
     params.cache = 'no-cache'
@@ -226,12 +227,12 @@ async function braid_fetch(url, params = {},
 
     // And customize the response with a couple methods for getting
     // the braid subscription data:
-    res.subscribe = start_subscription
-    res.subscription = { [Symbol.asyncIterator]: iterator }
+    res.subscribe    = start_subscription
+    res.subscription = {[Symbol.asyncIterator]: iterator}
 
 
     // Now we define the subscription function we just used:
-    function start_subscription(cb, error) {
+    function start_subscription (cb, error) {
         if (!res.ok)
             throw new Error('Request returned not ok', res)
 
@@ -271,7 +272,7 @@ async function braid_fetch(url, params = {},
 
 
     // And the iterator for use with "for async (...)"
-    function iterator() {
+    function iterator () {
         // We'll keep this state while our iterator runs
         var initialized = false,
             inbox = [],
@@ -282,12 +283,12 @@ async function braid_fetch(url, params = {},
             async next() {
                 // If we've already received a version, return it
                 if (inbox.length > 0)
-                    return { done: false, value: inbox.shift() }
+                    return {done: false, value: inbox.shift()}
 
                 // Otherwise, let's set up a promise to resolve when we get the next item
                 var promise = new Promise((_resolve, _reject) => {
                     resolve = _resolve
-                    reject = _reject
+                    reject  = _reject
                 })
 
                 // Start the subscription, if we haven't already
@@ -297,7 +298,7 @@ async function braid_fetch(url, params = {},
                     // The subscription will call whichever resolve and
                     // reject functions the current promise is waiting for
                     start_subscription(x => resolve(x),
-                        x => reject(x))
+                                       x => reject(x) )
                 }
 
                 // Now wait for the subscription to resolve or reject the promise.
@@ -305,7 +306,7 @@ async function braid_fetch(url, params = {},
 
                 // Anything we get from here out we should add to the inbox
                 resolve = (new_version) => inbox.push(new_version)
-                reject = (err) => { throw err }
+                reject  = (err) => {throw err}
 
                 return { done: false, value: result }
             }
@@ -316,7 +317,7 @@ async function braid_fetch(url, params = {},
 }
 
 // Parse a stream of versions from the incoming bytes
-async function handle_fetch_stream(stream, cb, on_bytes_received) {
+async function handle_fetch_stream (stream, cb, on_bytes_received) {
     if (is_nodejs)
         stream = to_whatwg_stream(stream)
 
@@ -328,25 +329,24 @@ async function handle_fetch_stream(stream, cb, on_bytes_received) {
     while (true) {
         var versions = []
 
+        // Read the next chunk of stream!
         try {
-            // Read the next chunk of stream!
-            var { done, value } = await reader.read()
-
-            // Check if this connection has been closed!
-            if (done) {
-                console.debug("Connection closed.")
-                cb(null, 'Connection closed')
-                return
-            }
-
-            // Tell the parser to process some more stream
-            parser.read(decoder.decode(value))
+            var {done, value} = await reader.read()
         }
-
         catch (e) {
             cb(null, e)
             return
         }
+
+        // Check if this connection has been closed!
+        if (done) {
+            console.debug("Connection closed.")
+            cb(null, 'Connection closed')
+            return
+        }
+
+        // Tell the parser to process some more stream
+        parser.read(decoder.decode(value))
     }
 }
 
@@ -356,18 +356,16 @@ async function handle_fetch_stream(stream, cb, on_bytes_received) {
 // Braid-HTTP Subscription Parser
 // ****************************
 
-
 var subscription_parser = (cb, on_bytes_received) => ({
     // A parser keeps some parse state
-    state: { input: '' },
+    state: {input: ''},
 
     // And reports back new versions as soon as they are ready
     cb: cb,
 
     // You give it new input information as soon as you get it, and it will
     // report back with new versions as soon as it finds them.
-    read(input) {
-
+    read (input) {
         if (on_bytes_received) on_bytes_received(input)
 
         // Store the new input!
@@ -375,22 +373,29 @@ var subscription_parser = (cb, on_bytes_received) => ({
 
         // Now loop through the input and parse until we hit a dead end
         while (this.state.input.trim() !== '') {
-            this.state = parse_update(this.state)
 
-            // Maybe we parsed a version!  That's cool!
+            // Try to parse an update
+            try {
+                this.state = parse_update (this.state)
+            } catch (e) {
+                this.cb(null, e)
+                return
+            }
+
+            // Maybe we parsed an update!  That's cool!
             if (this.state.result === 'success') {
                 this.cb({
                     version: this.state.version,
                     parents: this.state.parents,
-                    body: this.state.body,
+                    body:    this.state.body,
                     patches: this.state.patches,
 
                     // Output extra_headers if there are some
-                    extra_headers: extra_headers(this.state.headers)                    
+                    extra_headers: extra_headers(this.state.headers)
                 })
 
                 // Reset the parser for the next version!
-                this.state = { input: this.state.input }
+                this.state = {input: this.state.input}
             }
 
             // Or maybe there's an error to report upstream
@@ -421,7 +426,7 @@ var subscription_parser = (cb, on_bytes_received) => ({
 //  => {result: 'error', ...}    If there is a syntax error in the input
 
 
-function parse_update(state) {
+function parse_update (state) {
     // If we don't have headers yet, let's try to parse some
     if (!state.headers) {
         var parsed = parse_headers(state.input)
@@ -446,13 +451,13 @@ function parse_update(state) {
     return parse_body(state)
 }
 
-function swallow_blank_lines(input) {
+function swallow_blank_lines (input) {
     var blank_lines = /(\r\n|\n)*/.exec(input)[0]
     return input.substr(blank_lines.length)
 }
 
 // Parsing helpers
-function parse_headers(input) {
+function parse_headers (input) {
     input = swallow_blank_lines(input)
 
     // First, find the start & end block of the headers.  The headers start
@@ -464,12 +469,12 @@ function parse_headers(input) {
     // ...if we found none, then we need to wait for more input to complete
     // the headers..
     if (!headers_end)
-        return { result: 'waiting' }
+        return {result: 'waiting'}
 
     // We now know where the headers are to parse!
     var headers_length = headers_end.index + headers_end[1].length,
         headers_source = input.substring(0, headers_length)
-
+    
     // Let's parse them!  First define some variables:
     var headers = {},
         header_regex = /([\w-_]+):\s?(.*)\r?\n/gy,  // Parses one line a time
@@ -498,9 +503,9 @@ function parse_headers(input) {
 
     // Success!  Let's parse special headers
     if ('version' in headers)
-        headers.version = JSON.parse('[' + headers.version + ']')
+        headers.version = JSON.parse('['+headers.version+']')
     if ('parents' in headers)
-        headers.parents = JSON.parse('[' + headers.parents + ']')
+        headers.parents = JSON.parse('['+headers.parents+']')
     if ('patches' in headers)
         headers.patches = JSON.parse(headers.patches)
 
@@ -520,11 +525,11 @@ function parse_headers(input) {
 }
 
 // Content-range is of the form '<unit> <range>' e.g. 'json .index'
-function parse_content_range(range_string) {
+function parse_content_range (range_string) {
     var match = range_string.match(/(\S+)( (.*))?/)
-    return match && { unit: match[1], range: match[3] || '' }
+    return match && {unit: match[1], range: match[3] || ''}
 }
-function parse_body(state) {
+function parse_body (state) {
 
     // Parse Body Snapshot
 
@@ -576,11 +581,11 @@ function parse_body(state) {
     else if (state.headers.patches != null) {
         state.patches = state.patches || []
 
-        var last_patch = state.patches[state.patches.length - 1]
+        var last_patch = state.patches[state.patches.length-1]
 
         // Parse patches until the final patch has its content filled
         while (!(state.patches.length === state.headers.patches
-            && (state.patches.length === 0 || 'content' in last_patch))) {
+                 && (state.patches.length === 0 || 'content' in last_patch))) {
 
             state.input = state.input.trimStart()
 

@@ -1,6 +1,7 @@
 
 console.log(`RUNNING content SCRIPT!`)
 
+var peer = Math.random().toString(36).substr(2)
 var version = null
 var parents = null
 var content_type = null
@@ -109,6 +110,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
         subscribe,
         version: !subscribe ? (version ? JSON.parse(`[${version}]`) : null) : null,
         parents: !subscribe ? (parents ? JSON.parse(`[${parents}]`) : null) : () => get_parents(),
+        peer,
         headers: { Accept: content_type, ...(merge_type ? { ['Merge-Type']: merge_type } : {}) },
         signal: abort_controller.signal
       })
@@ -241,6 +243,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
                 content: p.content,
               },
             ],
+            peer
           };
           versions.push(ops)
           chrome.runtime.sendMessage({ action: "new_version", version: ops })
@@ -400,6 +403,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
             method: "PUT",
             retry: true,
             version, parents, patches,
+            peer
           }
           versions.push(ops)
           chrome.runtime.sendMessage({ action: "new_version", version: ops })

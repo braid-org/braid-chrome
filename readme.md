@@ -8,6 +8,7 @@ Features:
   - the page live as updates occur to it
 - Collaborative editing for text, markdown, javascript, and json URLs
   - Supports diamond-types merge-type
+  - Supports [simpleton](https://braid.org/meeting-76/simpleton-demo) too
 - Braid developer tools:
   - Watch the network messages
   - View and navigate version history

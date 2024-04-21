@@ -75,6 +75,9 @@ function add_message(message) {
         versions = message.versions
         raw_messages = message.raw_messages
         headers = message.headers
+        if (!message.should_we_handle_this) {
+            subscribe_request.checked = false
+        }
         update()
     } else if (message.action == 'new_version') {
         versions.push(message.version)

@@ -10,6 +10,7 @@ var merge_type = null
 var headers = {}
 var versions = []
 var raw_messages = []
+var should_we_handle_this = false
 
 var oplog = null
 var default_version_count = 1
@@ -55,7 +56,7 @@ function set_subscription_online(bool) {
 chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
   console.log(`getting message with cmd: ${request.cmd}`)
   if (request.cmd == 'init') {
-    chrome.runtime.sendMessage({ action: "init", headers, versions, raw_messages })
+    chrome.runtime.sendMessage({ action: "init", headers, versions, raw_messages, should_we_handle_this })
   } else if (request.cmd == "show_diff") {
     on_show_diff(request.from_version)
   } else if (request.cmd == "reload") {
@@ -63,8 +64,6 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     abort_controller.abort()
     location.reload()
   } else if (request.cmd == 'loaded') {
-    chrome.runtime.sendMessage({ action: "init", versions, raw_messages, headers })
-
     version = request.dev_message?.version
     parents = request.dev_message?.parents
     content_type = request.dev_message?.content_type
@@ -73,7 +72,11 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
 
     let white_list = { 'text/plain': true, 'application/json': true, 'application/javascript': true, 'text/markdown': true }
 
-    let should_we_handle_this = version || parents || content_type || merge_type || subscribe || white_list[request.headers['content-type']] || request.headers['accept-subscribe']
+    should_we_handle_this = version || parents || (content_type && (content_type != 'text/html')) || merge_type || subscribe || white_list[request.headers['content-type']] || (request.headers['accept-subscribe'] && (content_type != 'text/html') && (request.headers['content-type'] != 'text/html'))
+
+    headers = {}
+    for (let x of Object.entries(request.headers)) headers[x[0]] = x[1]
+    chrome.runtime.sendMessage({ action: "init", headers, versions, raw_messages, should_we_handle_this })
 
     if (!should_we_handle_this) return
 

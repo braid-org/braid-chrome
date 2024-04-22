@@ -425,9 +425,6 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
       let ack_count = 0;
 
       response.subscribe(({ version, parents, body, patches }) => {
-
-        alert(`got stuff: ${JSON.stringify({ version, parents, body, patches })}`)
-
         console.log(
           `v = ${JSON.stringify(
             { version, parents, body, patches },
@@ -458,8 +455,6 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
           } else {
             doc = apply_patch(doc, patches[0].range, JSON.parse(patches[0].content))
           }
-
-          alert('got here??? new_version: ' + JSON.stringify(new_version, null, 4))
 
           versions.push(new_version)
           chrome.runtime.sendMessage({ action: "new_version", version: new_version })

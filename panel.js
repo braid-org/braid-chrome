@@ -9,6 +9,7 @@ window.onerror = function (message, source, lineno, colno, error) {
 let versions = []
 let raw_messages = []
 let headers = {}
+let get_failed = ''
 
 let last_version = ''
 let last_parents = ''
@@ -75,9 +76,7 @@ function add_message(message) {
         versions = message.versions
         raw_messages = message.raw_messages
         headers = message.headers
-        if (!message.should_we_handle_this) {
-            subscribe_request.checked = false
-        }
+        get_failed = message.get_failed
         update()
     } else if (message.action == 'new_version') {
         versions.push(message.version)
@@ -87,6 +86,9 @@ function add_message(message) {
         update()
     } else if (message.action == 'braid_in' || message.action == 'braid_out') {
         raw_messages.push(message.data)
+        update()
+    } else if (message.action == 'get_failed') {
+        get_failed = message.get_failed
         update()
     }
 }
@@ -112,6 +114,10 @@ function raw_update() {
     })) {
         window[v].textContent = headers[k] ?? ''
     }
+    window.subscribe_response.textContent = '' + (headers.subscribe != null)
+
+    window.error_d_label.style.display = get_failed ? 'inline' : 'none'
+    window.error_d.textContent = get_failed
 
     let actor_to_color = {}
     let actor_color_angles = []

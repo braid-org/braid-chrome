@@ -6,11 +6,12 @@ var version = null
 var parents = null
 var content_type = null
 var merge_type = null
+var subscribe = true
 
 var headers = {}
 var versions = []
 var raw_messages = []
-var should_we_handle_this = false
+var get_failed = ''
 
 var oplog = null
 var default_version_count = 1
@@ -56,7 +57,7 @@ function set_subscription_online(bool) {
 chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
   console.log(`getting message with cmd: ${request.cmd}`)
   if (request.cmd == 'init') {
-    chrome.runtime.sendMessage({ action: "init", headers, versions, raw_messages, should_we_handle_this })
+    chrome.runtime.sendMessage({ action: "init", headers, versions, raw_messages, get_failed })
   } else if (request.cmd == "show_diff") {
     on_show_diff(request.from_version)
   } else if (request.cmd == "reload") {
@@ -66,23 +67,39 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
   } else if (request.cmd == 'loaded') {
     version = request.dev_message?.version
     parents = request.dev_message?.parents
-    content_type = request.dev_message?.content_type
-    merge_type = request.dev_message?.merge_type
-    let subscribe = request.dev_message?.subscribe
-
-    let white_list = { 'text/plain': true, 'application/json': true, 'application/javascript': true, 'text/markdown': true }
-
-    should_we_handle_this = version || parents || (content_type && (content_type != 'text/html')) || merge_type || subscribe || white_list[request.headers['content-type']] || (request.headers['accept-subscribe'] && (content_type != 'text/html') && (request.headers['content-type'] != 'text/html'))
+    content_type = request.dev_message?.content_type || request.headers['content-type']
+    merge_type = request.dev_message?.merge_type || request.headers['merge-type']
+    subscribe = request.dev_message ? request.dev_message?.subscribe : true
 
     headers = {}
     for (let x of Object.entries(request.headers)) headers[x[0]] = x[1]
-    chrome.runtime.sendMessage({ action: "init", headers, versions, raw_messages, should_we_handle_this })
 
+    chrome.runtime.sendMessage({ action: "init", headers, versions, raw_messages, get_failed })
+
+    let should_we_handle_this = ({ 'text/plain': true, 'application/json': true, 'application/javascript': true, 'text/markdown': true })[request.headers['content-type']?.split(';')[0]] || (request.dev_message?.content_type && (request.dev_message?.content_type != 'text/html'))
+    console.log(`should_we_handle_this = ${should_we_handle_this}`)
     if (!should_we_handle_this) return
 
-    content_type = content_type || request.headers['content-type']
-    merge_type = merge_type || request.headers['merge-type']
-    subscribe = subscribe || (!request.dev_message && request.headers['accept-subscribe'])
+    var response
+    try {
+      let options = {
+        version: !subscribe ? (version ? JSON.parse(`[${version}]`) : null) : null,
+        parents: !subscribe ? (parents ? JSON.parse(`[${parents}]`) : null) : () => get_parents(),
+        peer,
+        headers: { Accept: content_type, ...(merge_type ? { ['Merge-Type']: merge_type } : {}) },
+        signal: abort_controller.signal
+      }
+      if (subscribe) {
+        options.subscribe = true
+        options.retry_after_first_success = true
+      }
+      response = await braid_fetch_wrapper(window.location.href, options)
+    } catch (e) {
+      console.log('braid_fetch_wrapper failed: ' + e)
+      get_failed = '' + e
+      chrome.runtime.sendMessage({ action: "get_failed", get_failed })
+      return
+    }
 
     await new Promise(done => {
       document.open()
@@ -107,24 +124,13 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     })
     let textarea = document.querySelector("#textarea");
 
-    var response = await braid_fetch_wrapper(window.location.href,
-      {
-        retry: true,
-        subscribe,
-        version: !subscribe ? (version ? JSON.parse(`[${version}]`) : null) : null,
-        parents: !subscribe ? (parents ? JSON.parse(`[${parents}]`) : null) : () => get_parents(),
-        peer,
-        headers: { Accept: content_type, ...(merge_type ? { ['Merge-Type']: merge_type } : {}) },
-        signal: abort_controller.signal
-      })
-
     headers = {}
     for (let x of response.headers.entries()) headers[x[0].toLowerCase()] = x[1]
     chrome.runtime.sendMessage({ action: "new_headers", headers })
 
     if (headers['merge-type']) merge_type = headers['merge-type']
 
-    if (!subscribe) return textarea.textContent = await response.text()
+    if (headers.subscribe == null) return textarea.textContent = await response.text()
 
     if (merge_type == 'dt') {
       let wasmModuleBuffer = await (await fetch(chrome.runtime.getURL('dt_bg.wasm'))).arrayBuffer();
@@ -591,13 +597,14 @@ function apply_patches_and_update_selection(textarea, patches) {
 }
 
 async function braid_fetch_wrapper(url, params) {
-  if (!params.retry) return braid_fetch(url, params)
+  if (!params.retry && !params.retry_after_first_success) return braid_fetch(url, params)
 
   var waitTime = 10
   if (params.subscribe) {
     var most_recent_response = null
     var subscribe_handler = null
-    return new Promise(done => {
+    var first_time = true
+    return new Promise((done, fail) => {
       connect()
       async function connect() {
         try {
@@ -621,8 +628,10 @@ async function braid_fetch_wrapper(url, params) {
           done(most_recent_response)
           waitTime = 10
         } catch (e) {
+          if (params.retry_after_first_success && first_time) return fail('Failed on first try: ' + e)
           on_error(e)
         }
+        first_time = false
       }
       function on_error(e) {
         console.log('eee = ' + e.stack)
@@ -639,7 +648,7 @@ async function braid_fetch_wrapper(url, params) {
             on_bytes_received(x)
             set_subscription_online(true)
           }, on_bytes_going_out)
-          if (res.status !== 200) throw "status not 200: " + res.status
+          if (!res.ok) throw "status not ok: " + res.status
           done(res)
         } catch (e) {
           setTimeout(send, waitTime)

@@ -101,6 +101,14 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
       return
     }
 
+    headers = {}
+    for (let x of response.headers.entries()) headers[x[0].toLowerCase()] = x[1]
+    chrome.runtime.sendMessage({ action: "new_headers", headers })
+
+    if (headers['merge-type']) merge_type = headers['merge-type']
+
+    if (headers['content-type'].startsWith('text/html')) return
+
     await new Promise(done => {
       document.open()
       document.write(`
@@ -123,12 +131,6 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
       window.onload = () => done()
     })
     let textarea = document.querySelector("#textarea");
-
-    headers = {}
-    for (let x of response.headers.entries()) headers[x[0].toLowerCase()] = x[1]
-    chrome.runtime.sendMessage({ action: "new_headers", headers })
-
-    if (headers['merge-type']) merge_type = headers['merge-type']
 
     if (headers.subscribe == null) return textarea.textContent = await response.text()
 

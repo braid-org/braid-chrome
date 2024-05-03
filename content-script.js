@@ -16,7 +16,7 @@ var get_failed = ''
 var oplog = null
 var default_version_count = 1
 var on_show_diff = () => { }
-var get_parents = () => []
+var get_parents = () => null
 
 var abort_controller = new AbortController();
 

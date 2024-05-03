@@ -105,6 +105,8 @@ function update() {
 }
 
 function raw_update() {
+    let was_scrolled_to_bottom = isScrolledToBottom(id_messages)
+
     for (let [k, v] of Object.entries({
         'content-type': 'content_type_response',
         'subscribe': 'subscribe_response',
@@ -331,7 +333,11 @@ function raw_update() {
         id_messages.append(d)
     }
 
-    id_messages.scrollTop = id_messages.scrollHeight
+    if (was_scrolled_to_bottom) id_messages.scrollTop = id_messages.scrollHeight
+}
+
+function isScrolledToBottom(element) {
+  return element.scrollHeight - element.scrollTop === element.clientHeight;
 }
 
 function make_html(s) {

@@ -32,6 +32,7 @@ window.errorify = (msg) => {
 }
 
 function on_bytes_received(s) {
+  s = (new TextDecoder()).decode(s)
   console.log(`on_bytes_received[${s.slice(0, 500)}]`)
   raw_messages.push(s)
   chrome.runtime.sendMessage({ action: "braid_in", data: s })
@@ -143,6 +144,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
       __wbg_finalize_init(instance, module);
 
       let last_text = "";
+      let last_text_code_points = 0;
 
       let sent_count = 0;
       let ack_count = 0;
@@ -193,38 +195,49 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
 
       textarea.addEventListener("input", async () => {
         let commonStart = 0;
+        let commonStart_codePoints = 0;
         while (
           commonStart < Math.min(last_text.length, textarea.value.length) &&
-          last_text[commonStart] == textarea.value[commonStart]
+          last_text.codePointAt(commonStart) == textarea.value.codePointAt(commonStart)
         ) {
-          commonStart++;
+          commonStart += textarea.value.codePointAt(commonStart) > 0xffff ? 2 : 1
+          commonStart_codePoints++
         }
 
         let commonEnd = 0;
-        while (
-          commonEnd <
-          Math.min(
-            last_text.length - commonStart,
-            textarea.value.length - commonStart
-          ) &&
-          last_text[last_text.length - commonEnd - 1] ==
-          textarea.value[textarea.value.length - commonEnd - 1]
-        ) {
-          commonEnd++;
+        let commonEnd_codePoints = 0;
+        let left_over = Math.min(
+          last_text.length - commonStart,
+          textarea.value.length - commonStart
+        )
+        while (commonEnd < left_over) {
+          let a = last_text.codePointAt(last_text.length - commonEnd - 1)
+          let b = textarea.value.codePointAt(textarea.value.length - commonEnd - 1)
+          if (a != b) break
+          if (a >= 0xD800 && a <= 0xDFFF) {
+            if (commonEnd + 1 >= left_over) break
+            a = last_text.codePointAt(last_text.length - commonEnd - 2)
+            b = textarea.value.codePointAt(textarea.value.length - commonEnd - 2)
+            if (a != b) break
+            commonEnd += 2
+          } else {
+            commonEnd++
+          }
+          commonEnd_codePoints++
         }
 
-        let splicePos = commonStart;
-        let numToDelete = last_text.length - commonStart - commonEnd;
+        let numCodePointsToDelete = last_text_code_points - commonStart_codePoints - commonEnd_codePoints;
         let stuffToInsert = textarea.value.slice(
           commonStart,
           textarea.value.length - commonEnd
         );
 
         last_text = textarea.value;
+        last_text_code_points = commonStart_codePoints + commonEnd_codePoints + count_code_points(stuffToInsert)
 
         let v = oplog.getLocalVersion();
-        if (numToDelete) oplog.del(splicePos, numToDelete);
-        if (stuffToInsert) oplog.ins(splicePos, stuffToInsert);
+        if (numCodePointsToDelete) oplog.del(commonStart_codePoints, numCodePointsToDelete);
+        if (stuffToInsert) oplog.ins(commonStart_codePoints, stuffToInsert);
 
         for (let p of OpLog_get_patches(
           oplog.getPatchSince(v),
@@ -245,6 +258,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
             retry: true,
             method: "PUT",
             mode: "cors",
+            headers: {"Content-Type": content_type},
             version: p.version,
             parents: p.parents,
             patches: [
@@ -298,6 +312,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
           patches = patches.map((p) => ({
             ...p,
             range: p.range.match(/\d+/g).map((x) => parseInt(x)),
+            ...(p.content ? { content: [...p.content] } : {}),
           }))
 
           let v = decode_version(version[0])
@@ -345,6 +360,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
         );
 
         textarea.value = last_text = new_text;
+        last_text_code_points = count_code_points(last_text);
         textarea.selectionStart = new_sel[0];
         textarea.selectionEnd = new_sel[1];
       })
@@ -410,7 +426,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
           last_seen_state = state
 
           var ops = {
-            headers: { "Merge-Type": "simpleton" },
+            headers: { "Merge-Type": "simpleton", "Content-Type": content_type },
             method: "PUT",
             retry: true,
             version, parents, patches,
@@ -494,31 +510,33 @@ function constructHTTPRequest(params, url) {
 
 function applyChanges(original, sel, changes) {
   for (var change of changes) {
+    let start = codePoints_to_index(original, change.start)
+    let end = codePoints_to_index(original, change.end)
     switch (change.kind) {
       case "Del":
         for (let i = 0; i < sel.length; i++) {
-          if (sel[i] > change.start) {
-            if (sel[i] > change.end) {
-              sel[i] -= change.end - change.start;
-            } else sel[i] = change.start;
+          if (sel[i] > start) {
+            if (sel[i] > end) {
+              sel[i] -= end - start;
+            } else sel[i] = start;
           }
         }
 
         original =
-          original.substring(0, change.start) +
-          original.substring(change.end);
+          original.substring(0, start) +
+          original.substring(end);
         break;
       case "Ins":
         for (let i = 0; i < sel.length; i++) {
-          if (sel[i] > change.start) {
+          if (sel[i] > start) {
             sel[i] += change.content.length;
           }
         }
 
         original =
-          original.substring(0, change.start) +
+          original.substring(0, start) +
           change.content +
-          original.substring(change.start);
+          original.substring(start);
         break;
       default:
         errorify(`Unsupported change kind: ${change.kind}`)
@@ -532,7 +550,7 @@ function applyChanges(original, sel, changes) {
 function count_chars_in_patches(patches) {
   return patches.reduce((a, b) => {
     var [start, end] = b.range.match(/\d+/g).map((x) => 1 * x)
-    return a + b.content.length + end - start
+    return a + count_code_points(b.content) + end - start
   }, 0)
 }
 
@@ -545,9 +563,9 @@ function get_patches_for_diff(before, after) {
     if (d[0] == 1) {
       p = { range: `[${offset}:${offset}]`, content: d[1] }
     } else if (d[0] == -1) {
-      p = { range: `[${offset}:${offset + d[1].length}]`, content: "" }
-      offset += d[1].length
-    } else offset += d[1].length
+      p = { range: `[${offset}:${offset + count_code_points(d[1])}]`, content: "" }
+      offset += count_code_points(d[1])
+    } else offset += count_code_points(d[1])
     if (p) {
       p.unit = "text"
       patches.push(p)
@@ -558,6 +576,25 @@ function get_patches_for_diff(before, after) {
 
 function apply_patches_and_update_selection(textarea, patches) {
   patches = patches.map(p => ({ ...p, range: p.range.match(/\d+/g).map((x) => 1 * x) })).sort((a, b) => a.range[0] - b.range[0])
+
+  // convert from code-points to js-indicies
+  let c = 0;
+  let i = 0;
+  for (let p of patches) {
+    while (c < p.range[0]) {
+      const charCode = textarea.value.charCodeAt(i)
+      i += (charCode >= 0xd800 && charCode <= 0xdbff) ? 2 : 1
+      c++
+    }
+    p.range[0] = i
+
+    while (c < p.range[1]) {
+      const charCode = textarea.value.charCodeAt(i)
+      i += (charCode >= 0xd800 && charCode <= 0xdbff) ? 2 : 1
+      c++
+    }
+    p.range[1] = i
+  }
 
   // convert from absolute to relative coordinates
   let offset = 0
@@ -660,6 +697,38 @@ async function braid_fetch_wrapper(url, params) {
     })
   }
 }
+
+function count_code_points(str) {
+  let code_points = 0;
+  for (let i = 0; i < str.length; i++) {
+    if (str.charCodeAt(i) >= 0xD800 && str.charCodeAt(i) <= 0xDBFF) i++;
+    code_points++;
+  }
+  return code_points;
+}
+
+function index_to_codePoints(str, index) {
+  let i = 0
+  let c = 0
+  while (i < index && i < str.length) {
+    const charCode = str.charCodeAt(i)
+    i += (charCode >= 0xd800 && charCode <= 0xdbff) ? 2 : 1
+    c++
+  }
+  return c
+}
+
+function codePoints_to_index(str, codePoints) {
+  let i = 0
+  let c = 0
+  while (c < codePoints && i < str.length) {
+    const charCode = str.charCodeAt(i)
+    i += (charCode >= 0xd800 && charCode <= 0xdbff) ? 2 : 1
+    c++
+  }
+  return i
+}
+
 
 // // Open devtools to braid when hotkey is pressedn
 // chrome.runtime.onMessage.addListener((message, sender, send_response) => {

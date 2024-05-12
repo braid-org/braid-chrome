@@ -1,5 +1,4 @@
-
-console.log(`RUNNING content SCRIPT!`)
+// console.log(`RUNNING content SCRIPT!`)
 
 var peer = Math.random().toString(36).substr(2)
 var version = null
@@ -56,7 +55,7 @@ function set_subscription_online(bool) {
 
 // This replaces the page with our "live-update" view of TEXT or JSON
 chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
-  console.log(`getting message with cmd: ${request.cmd}`)
+  // console.log(`getting message with cmd: ${request.cmd}`)
   if (request.cmd == 'init') {
     chrome.runtime.sendMessage({ action: "init", headers, versions, raw_messages, get_failed })
   } else if (request.cmd == "show_diff") {
@@ -78,7 +77,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     chrome.runtime.sendMessage({ action: "init", headers, versions, raw_messages, get_failed })
 
     let should_we_handle_this = ({ 'text/plain': true, 'application/json': true, 'application/javascript': true, 'text/markdown': true })[request.headers['content-type']?.split(';')[0]] || (request.dev_message?.content_type && (request.dev_message?.content_type != 'text/html'))
-    console.log(`should_we_handle_this = ${should_we_handle_this}`)
+    // console.log(`should_we_handle_this = ${should_we_handle_this}`)
     if (!should_we_handle_this) return
 
     var response

@@ -368,7 +368,7 @@ var subscription_parser = (cb, on_bytes_received) => ({
         if (on_bytes_received) on_bytes_received(input)
 
         // Store the new input!
-        this.state.input.push(...input)
+        for (let x of input) this.state.input.push(x)
 
         // Now loop through the input and parse until we hit a dead end
         while (this.state.input.length) {

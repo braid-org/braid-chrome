@@ -108,6 +108,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     if (headers['merge-type']) merge_type = headers['merge-type']
 
     if (headers['content-type'].startsWith('text/html')) return
+    if (headers.subscribe == null) return
 
     await new Promise(done => {
       document.open()
@@ -134,7 +135,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
 
     if (headers.subscribe == null) return textarea.textContent = await response.text()
 
-    if (merge_type == 'dt') {
+    if (merge_type === 'dt') {
       let wasmModuleBuffer = await (await fetch(chrome.runtime.getURL('dt_bg.wasm'))).arrayBuffer();
       const imports = __wbg_get_imports();
       __wbg_init_memory(imports);
@@ -348,9 +349,6 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
         if (textarea.value != last_text) {
           errorify("textarea out of sync somehow!")
         }
-
-        // work here
-        // console.log(`op log = ${JSON.stringify(oplog.getXFSince(v), null, 4)}`)
 
         let [new_text, new_sel] = applyChanges(
           textarea.value,

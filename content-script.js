@@ -110,27 +110,21 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     if (headers['content-type'].startsWith('text/html')) return
     if (headers.subscribe == null) return
 
-    await new Promise(done => {
-      document.open()
-      document.write(`
-          <script src="${chrome.runtime.getURL('braid-http-client.js')}"></script>
-          <script src="${chrome.runtime.getURL('myers-diff1.js')}"></script>
-          <body
-              style="padding: 0px; margin: 0px; width: 100vw; height: 100vh; overflow: clip; box-sizing: border-box;"
-          >
-              <pre id="diff_d" style="display:none;position: absolute; top: 0px; left: 0px; right: 0px; bottom: 0px;padding: 13px 8px; font-size: 13px;font-family: monospace;overflow:scroll;margin:0px; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word;"></pre>
-              <span id="online" style="position: absolute; top: 5px; right: 5px;">•</span>
-              <textarea
-              id="textarea"
-              style="width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box; background: transparent;"
-              readonly
-              disabled
-              ></textarea>
-          </body>
-        `);
-      document.close()
-      window.onload = () => done()
-    })
+    window.stop();
+    document.documentElement.innerHTML = `
+        <body
+            style="padding: 0px; margin: 0px; width: 100vw; height: 100vh; overflow: clip; box-sizing: border-box;"
+        >
+            <pre id="diff_d" style="display:none;position: absolute; top: 0px; left: 0px; right: 0px; bottom: 0px;padding: 13px 8px; font-size: 13px;font-family: monospace;overflow:scroll;margin:0px; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word;"></pre>
+            <span id="online" style="position: absolute; top: 5px; right: 5px;">•</span>
+            <textarea
+            id="textarea"
+            style="width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box; background: transparent;"
+            readonly
+            disabled
+            ></textarea>
+        </body>
+    `;
     let textarea = document.querySelector("#textarea");
 
     if (headers.subscribe == null) return textarea.textContent = await response.text()

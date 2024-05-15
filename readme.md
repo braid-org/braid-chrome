@@ -4,8 +4,8 @@ Chrome Extension adding Braid-HTTP directly into your browser.
 
 Features:
 - Live-updates any Braid-HTTP page, without the reload button
-  - `Subscribe: true` to GET requests when your browser loads a page
-  - the page live as updates occur to it
+  - Sends `Subscribe: true` for pages with content-type on white-list
+  - If response has `Subscribe: true`, the page live-updates as updates occur to it
 - Collaborative editing for text, markdown, javascript, and json URLs
   - Supports diamond-types merge-type
   - Supports [simpleton](https://braid.org/meeting-76/simpleton-demo) too

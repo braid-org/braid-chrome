@@ -76,6 +76,11 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
 
     chrome.runtime.sendMessage({ action: "init", headers, versions, raw_messages, get_failed })
 
+    // this next section implements this part of the readme.md
+    // - Live-updates any Braid-HTTP page, without the reload button
+    //   - Sends `Subscribe: true` for pages with content-type on white-list
+    //   - If response has `Subscribe: true`, the page live-updates as updates occur to it
+
     let should_we_handle_this = ({ 'text/plain': true, 'application/json': true, 'application/javascript': true, 'text/markdown': true })[request.headers['content-type']?.split(';')[0]] || (request.dev_message?.content_type && (request.dev_message?.content_type != 'text/html'))
     // console.log(`should_we_handle_this = ${should_we_handle_this}`)
     if (!should_we_handle_this) return

@@ -168,39 +168,42 @@ function raw_update() {
                 return d
             }
 
+            for (let i = 0; i < 6; i++) {
+                id_messages.append(make_html(`<div style="width:10px;height:10px"></div>`))
+            }
+
+            let actor = v_string.split('-')[0]
+            if (!actor_to_color[actor]) {
+                let angle = get_new_angle(actor_color_angles)
+                actor_color_angles.push(angle)
+                actor_to_color[actor] = angle_to_color(angle)
+            }
+
+            let version_circle = my_make_html(`<div style="
+                position: relative;
+                display: block;
+                vertical-align: middle;
+                width: ${time_dag_width}px;
+                height: ${time_dag_radius * 2}px;
+                background-color: transparent;
+                padding-right:10px;"></div>`)
+            version_circles[v_string] = version_circle
+            id_messages.append(version_circle)
+            if (!svg_parent) svg_parent = version_circle
+
+            id_messages.append(my_make_html(`<div style="padding-right:10px;color:${actor_to_color[actor]}">${v_string || 'root'}</div>`))
+
+            if (v.patches.length == 0) {
+                for (let i = 0; i < 4; i++)
+                    id_messages.append(make_html(`<div style="width:10px;height:10px"></div>`))
+            }
+            
             for (let ii = 0; ii < v.patches.length; ii++) {
                 let patch = v.patches[ii]
 
-                for (let i = 0; i < 6; i++) {
-                    id_messages.append(make_html(`<div style="width:10px;height:10px"></div>`))
-                }
-
-                if (ii == 0) {
-                    let actor = v_string.split('-')[0]
-                    if (!actor_to_color[actor]) {
-                        let angle = get_new_angle(actor_color_angles)
-                        actor_color_angles.push(angle)
-                        actor_to_color[actor] = angle_to_color(angle)
-                    }
-
-                    let version_circle = my_make_html(`<div style="
-                        position: relative;
-                        display: block;
-                        vertical-align: middle;
-                        width: ${time_dag_width}px;
-                        height: ${time_dag_radius * 2}px;
-                        background-color: transparent;
-                        padding-right:10px;"></div>`)
-                    version_circles[v_string] = version_circle
-                    id_messages.append(version_circle)
-                    if (!svg_parent) svg_parent = version_circle
-
-                    id_messages.append(my_make_html(`<div style="padding-right:10px;color:${actor_to_color[actor]}">${v_string}</div>`))
-                } else {
-                    for (let i = 0; i < 2; i++) {
+                if (ii > 0)
+                    for (let i = 0; i < 8; i++)
                         id_messages.append(make_html(`<div style="width:10px;height:10px"></div>`))
-                    }
-                }
 
                 id_messages.append(my_make_html(`<div><div style="color:black;background:rgb(245,245,245);font-family:monospace;padding-right:10px">${patch.unit}</div></div>`))
                 id_messages.append(my_make_html(`<div style="font-family:monospace;padding-right:10px">${patch.unit == 'text' ? patch.range.slice(1, -1) : patch.range}</div>`))
@@ -223,8 +226,8 @@ function raw_update() {
         let v_to_realv = {}
         let version_ys = {}
 
-        let py = svg_parent.getBoundingClientRect()
-        py = py.y + py.height / 2
+        let py = svg_parent?.getBoundingClientRect() || 0
+        if (py) py = py.y + py.height / 2
 
         let actor_to_seq = {}
         for (let v of versions) {

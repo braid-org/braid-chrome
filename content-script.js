@@ -32,14 +32,14 @@ window.errorify = (msg) => {
 
 function on_bytes_received(s) {
   s = (new TextDecoder()).decode(s)
-  console.log(`on_bytes_received[${s.slice(0, 500)}]`)
+  // console.log(`on_bytes_received[${s.slice(0, 500)}]`)
   raw_messages.push(s)
   chrome.runtime.sendMessage({ action: "braid_in", data: s })
 }
 
 function on_bytes_going_out(params, url) {
   let data = constructHTTPRequest(params, url)
-  console.log(`on_bytes_going_out[${data}]`)
+  // console.log(`on_bytes_going_out[${data}]`)
   raw_messages.push(data)
   chrome.runtime.sendMessage({ action: "braid_out", data })
 }
@@ -85,7 +85,14 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     // console.log(`should_we_handle_this = ${should_we_handle_this}`)
     if (!should_we_handle_this) return
 
-    var response
+    // let's see empirically whether the server is willing to entertain a subscription
+    var response = await fetch(window.location.href, {headers: {Accept: content_type, Subscribe: true}})
+
+    if (response.headers.get('subscribe') == null) return
+    if (response.headers.get('content-type').startsWith('text/html')) return
+
+    window.stop();
+
     try {
       let options = {
         version: !subscribe ? (version ? JSON.parse(`[${version}]`) : null) : null,
@@ -112,10 +119,6 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
 
     if (headers['merge-type']) merge_type = headers['merge-type']
 
-    if (headers['content-type'].startsWith('text/html')) return
-    if (headers.subscribe == null) return
-
-    window.stop();
     document.documentElement.innerHTML = `
         <body
             style="padding: 0px; margin: 0px; width: 100vw; height: 100vh; overflow: clip; box-sizing: border-box;"
@@ -375,7 +378,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
 
       response.subscribe(update => {
 
-        console.log(`got update: ${JSON.stringify(update)}`)
+        // console.log(`got update: ${JSON.stringify(update)}`)
 
         if (textarea.hasAttribute("readonly")) {
           textarea.removeAttribute("readonly")

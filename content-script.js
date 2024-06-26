@@ -78,10 +78,11 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
 
     // this next section implements this part of the readme.md
     // - Live-updates any Braid-HTTP page, without the reload button
-    //   - Sends `Subscribe: true` for pages with content-type on white-list
+    //   - Sends `Subscribe: true` for pages with content-type of text, markdown, javascript, or json, as well as html pages that send a `Subscribed: false` header
     //   - If response has `Subscribe: true`, the page live-updates as updates occur to it
 
-    let should_we_handle_this = ({ 'text/plain': true, 'application/json': true, 'application/javascript': true, 'text/markdown': true })[request.headers['content-type']?.split(';')[0]] || (request.dev_message?.content_type && (request.dev_message?.content_type != 'text/html'))
+    let should_we_handle_this = request.dev_message?.content_type || ({ 'text/plain': true, 'application/json': true, 'application/javascript': true, 'text/markdown': true, 'text/html': headers.subscribed === 'false' })[request.headers['content-type']?.split(';')[0]]
+
     // console.log(`should_we_handle_this = ${should_we_handle_this}`)
     if (!should_we_handle_this) return
 
@@ -89,7 +90,6 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     var response = await fetch(window.location.href, {headers: {Accept: content_type, Subscribe: true}})
 
     if (response.headers.get('subscribe') == null) return
-    if (response.headers.get('content-type').startsWith('text/html')) return
 
     window.stop();
 
@@ -119,7 +119,14 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
 
     if (headers['merge-type']) merge_type = headers['merge-type']
 
-    document.documentElement.innerHTML = `
+    let is_html = headers['content-type']?.split(';')[0] === 'text/html'
+
+    document.documentElement.innerHTML = is_html ? `
+        <body>
+            <span id="online" style="position: absolute; top: 5px; right: 5px;">•</span>
+            <div id="main_div"></div>
+        </body>
+    ` : `
         <body
             style="padding: 0px; margin: 0px; width: 100vw; height: 100vh; overflow: clip; box-sizing: border-box;"
         >
@@ -133,6 +140,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
             ></textarea>
         </body>
     `;
+    let main_div = document.querySelector("#main_div");
     let textarea = document.querySelector("#textarea");
 
     if (headers.subscribe == null) return textarea.textContent = await response.text()
@@ -362,6 +370,21 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
         last_text_code_points = count_code_points(last_text);
         textarea.selectionStart = new_sel[0];
         textarea.selectionEnd = new_sel[1];
+      })
+    } else if (merge_type === 'simpleton' && is_html) {
+      console.log(`doing simpleton-html.. content-type=${headers['content-type']}`)
+
+      response.subscribe(update => {
+        let new_version = {
+          ...update,
+          method: "GET",
+        }
+        if (!new_version.patches) new_version.patches = [{ unit: 'xpath', range: '/', content: update.body }]
+
+        applyDomDiff(main_div, new_version.patches)
+
+        versions.push(new_version)
+        chrome.runtime.sendMessage({ action: "new_version", version: new_version })
       })
     } else if (merge_type == 'simpleton') {
 
@@ -732,3 +755,49 @@ function codePoints_to_index(str, codePoints) {
 // // Open devtools to braid when hotkey is pressedn
 // chrome.runtime.onMessage.addListener((message, sender, send_response) => {
 //   if (message.action === 'openBraidPanel') 
+
+function applyDomDiff(dest, diff) {
+  let offsets = new Map()
+
+  diff.forEach((change) => {
+    const [path, newValue] = [change.range, change.content]
+    const indexes = []
+    let insert_position = null
+    path.replace(/\[(\d+)(?::(\d+))?\]/g, (_0, _1, _2) => {
+      if (_2 != null) {
+        insert_position = 1 * _2
+      } else indexes.push(1 * _1)
+    })
+    if (insert_position == null) insert_position = indexes.pop()
+
+    let node = dest
+
+    for (let i = 0; i < indexes.length; i++) {
+      node = Array.from(node.childNodes)[indexes[i]]
+    }
+
+    const i = insert_position + (offsets.get(node) ?? 0)
+
+    if (newValue) {
+      let newElement = document.createElement("div")
+      newElement.innerHTML = newValue
+      newElement = newElement.firstChild
+
+      if (i === node.childNodes.length) {
+        // If the insertion index is equal to the number of child nodes,
+        // append the new element as the last child
+        node.appendChild(newElement)
+      } else {
+        // Otherwise, insert the new element at the specified index
+        node.insertBefore(newElement, node.childNodes[i])
+      }
+
+      offsets.set(node, (offsets.get(node) ?? 0) + 1)
+    } else {
+      // If newValue is falsy, remove the child node at the specified index
+      if (i >= node.childNodes.length) throw "bad"
+      node.removeChild(node.childNodes[i])
+      offsets.set(node, (offsets.get(node) ?? 0) - 1)
+    }
+  })
+}

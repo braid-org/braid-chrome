@@ -67,7 +67,8 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
   } else if (request.cmd == 'loaded') {
     version = request.dev_message?.version
     parents = request.dev_message?.parents
-    content_type = request.dev_message?.content_type || request.headers['content-type']
+    let req_content_type = request.headers['content-type']?.split(/[;,]/)[0]
+    content_type = request.dev_message?.content_type || req_content_type
     merge_type = request.dev_message?.merge_type || request.headers['merge-type']
     subscribe = request.dev_message ? request.dev_message?.subscribe : true
 
@@ -81,7 +82,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     //   - Sends `Subscribe: true` for pages with content-type of text, markdown, javascript, or json, as well as html pages that send a `Subscribed: false` header
     //   - If response has `Subscribe: true`, the page live-updates as updates occur to it
 
-    let should_we_handle_this = request.dev_message?.content_type || ({ 'text/plain': true, 'application/json': true, 'application/javascript': true, 'text/markdown': true, 'text/html': headers.subscribed === 'false' })[request.headers['content-type']?.split(';')[0]]
+    let should_we_handle_this = request.dev_message?.content_type || ({ 'text/plain': true, 'application/json': true, 'application/javascript': true, 'text/markdown': true, 'text/html': headers.subscribed === 'false' })[req_content_type]
 
     // console.log(`should_we_handle_this = ${should_we_handle_this}`)
     if (!should_we_handle_this) return
@@ -120,6 +121,8 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     if (headers['merge-type']) merge_type = headers['merge-type']
 
     let is_html = headers['content-type']?.split(';')[0] === 'text/html'
+
+    if (is_html && headers.subscribe == null) return
 
     document.documentElement.innerHTML = is_html ? `
         <body>

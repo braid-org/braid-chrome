@@ -470,17 +470,55 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     } else if (content_type == 'application/json') {
       let doc = null;
 
-      let sent_count = 0;
-      let ack_count = 0;
+      function set_style_good(good) {
+        textarea.style.background = good ? '' : 'pink'
+        textarea.style.caretColor = good ? '' : 'red'
+      }
+
+      textarea.oninput = async e => {
+        try {
+          doc = JSON.parse(textarea.value)
+
+          set_style_good(true)
+
+          let new_version = {
+            headers: { "Content-Type": content_type },
+            method: "PUT",
+            retry: true,
+            version: ['default-' + default_version_count++],
+            parents: [],
+            patches: [{ unit: 'json', range: '', content: JSON.stringify(doc) }],
+            peer
+          }
+          versions.push(new_version)
+          chrome.runtime.sendMessage({ action: "new_version", version: new_version })
+
+          await braid_fetch_wrapper(window.location.href, {
+            headers: { "Content-Type": content_type },
+            method: "PUT",
+            retry: true,
+            version: ['default-' + default_version_count++], parents: [], patches: [{ unit: 'json', range: '', content: JSON.stringify(doc) }],
+            peer
+          })
+        } catch (e) {
+          set_style_good(false)
+        }
+      }
 
       response.subscribe(({ version, parents, body, patches }) => {
-        console.log(
-          `v = ${JSON.stringify(
-            { version, parents, body, patches },
-            null,
-            4
-          )}`
-        );
+
+        if (textarea.hasAttribute("readonly")) {
+          textarea.removeAttribute("readonly")
+          textarea.removeAttribute('disabled')
+        }
+
+        // console.log(
+        //   `v = ${JSON.stringify(
+        //     { version, parents, body, patches },
+        //     null,
+        //     4
+        //   )}`
+        // );
 
         if (!version) version = 'default-' + default_version_count++
         if (!parents) parents = []
@@ -515,7 +553,8 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
 
           // location.reload()
         }
-        document.querySelector("#textarea").value = JSON.stringify(doc)
+        textarea.value = JSON.stringify(doc)
+        set_style_good(true)
       })
     }
   }

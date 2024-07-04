@@ -262,7 +262,7 @@ function raw_update() {
             let color = actor_to_color[actor]
 
             let x = null
-            if (!v.parents || v.parents.length == 0 || (v.parents.length == 1 && v_to_realv[v.parents[0]] == last_v)) {
+            if (!v.parents || v.parents.length == 0 || v_to_realv['' + v.parents] == last_v) {
                 x = last_x
             } else {
                 let r = parseInt(v_string[0], 36) / 35
@@ -273,7 +273,9 @@ function raw_update() {
 
             let y = version_ys[v_string]
 
-            for (let p of (v.parents ?? [])) {
+            let ps = v.parents ?? []
+            if (ps.length > 1 && v_to_realv['' + v.parents]) ps = ['' + v.parents]
+            for (let p of ps) {
                 let pointing_to_subversion = v_to_realv[p] != p
                 p = v_to_realv[p]
                 let h = y - version_ys[p]
@@ -294,7 +296,7 @@ function raw_update() {
             let color = actor_to_color[actor]
 
             let x = null
-            if (!v.parents || v.parents.length == 0 || (v.parents.length == 1 && v_to_realv[v.parents[0]] == last_v)) {
+            if (!v.parents || v.parents.length == 0 || v_to_realv['' + v.parents] == last_v) {
                 x = last_x
             } else {
                 let r = parseInt(v_string[0], 36) / 35

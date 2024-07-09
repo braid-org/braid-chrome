@@ -286,8 +286,10 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
           versions.push(ops)
           chrome.runtime.sendMessage({ action: "new_version", version: ops })
           sent_count++
+          textarea.style.caretColor = 'red'
           await braid_fetch_wrapper(window.location.href, ops);
           ack_count++
+          if (ack_count == sent_count) textarea.style.caretColor = ''
         }
       });
 
@@ -461,14 +463,17 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
           chrome.runtime.sendMessage({ action: "new_version", version: ops })
 
           outstanding_changes++
+          textarea.style.caretColor = 'red'
           await braid_fetch_wrapper(window.location.href, ops)
           outstanding_changes--
+          if (!outstanding_changes) textarea.style.caretColor = ''
         }
       }
     } else if (merge_type) {
       throw 'unsupported merge-type: ' + merge_type
     } else if (content_type == 'application/json') {
-      let doc = null;
+      var doc = null
+      var outstanding_changes = 0
 
       function set_style_good(good) {
         textarea.style.background = good ? '' : 'pink'
@@ -493,6 +498,8 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
           versions.push(new_version)
           chrome.runtime.sendMessage({ action: "new_version", version: new_version })
 
+          outstanding_changes++
+          textarea.style.caretColor = 'red'
           await braid_fetch_wrapper(window.location.href, {
             headers: { "Content-Type": content_type },
             method: "PUT",
@@ -500,6 +507,8 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
             version: ['default-' + default_version_count++], parents: [], patches: [{ unit: 'json', range: '', content: JSON.stringify(doc) }],
             peer
           })
+          outstanding_changes--
+          if (!outstanding_changes) textarea.style.caretColor = ''
         } catch (e) {
           set_style_good(false)
         }

@@ -320,17 +320,15 @@ function raw_update() {
     } else if (id_raw_messages.checked && raw_messages?.length) {
         id_messages.style.display = 'block'
 
-        for (let msg of raw_messages) {
-            let d = document.createElement('pre')
-            d.textContent = msg
-            //d.style.background = `rgb(41,42,45)`
-            d.style.borderRadius = '3px'
-            d.style.margin = '3px'
-            d.style.padding = '3px'
-            d.style.textWrap = 'wrap'
+        let d = document.createElement('pre')
+        d.textContent = raw_messages.join('')
+        //d.style.background = `rgb(41,42,45)`
+        d.style.borderRadius = '3px'
+        d.style.margin = '3px'
+        d.style.padding = '3px'
+        d.style.textWrap = 'wrap'
 
-            id_messages.append(d)
-        }
+        id_messages.append(d)
     } else {
         let d = document.createElement('div')
         d.textContent = 'nothing to show'

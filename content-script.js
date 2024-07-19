@@ -10,6 +10,7 @@ var subscribe = true
 var headers = {}
 var versions = []
 var raw_messages = []
+var raw_prepend = null
 var get_failed = ''
 
 var oplog = null
@@ -31,6 +32,12 @@ window.errorify = (msg) => {
 }
 
 function on_bytes_received(s) {
+  if (raw_prepend) {
+    raw_messages.push(raw_prepend)
+    chrome.runtime.sendMessage({ action: "braid_in", data: raw_prepend })
+    raw_prepend = null
+  }
+
   s = (new TextDecoder()).decode(s)
   // console.log(`on_bytes_received[${s.slice(0, 500)}]`)
   raw_messages.push(s)
@@ -720,6 +727,10 @@ async function braid_fetch_wrapper(url, params) {
       connect()
       async function connect() {
         try {
+          raw_prepend = `HTTP/1.1 104 Multiresponse
+
+HTTP/1.1 200 OK
+`
           most_recent_response = await braid_fetch(url, { ...params, parents: params.parents?.() }, (x) => {
             on_bytes_received(x)
             set_subscription_online(true)
@@ -728,6 +739,7 @@ async function braid_fetch_wrapper(url, params) {
 
           function sub() {
             most_recent_response.og_subscribe((...args) => {
+              raw_prepend = 'HTTP/1.1 200 OK\n'
               subscribe_handler?.(...args)
             }, on_error)
           }

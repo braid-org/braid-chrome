@@ -1,5 +1,7 @@
 // console.log(`RUNNING content SCRIPT!`)
 
+var httpx = 'HTTP'
+
 var peer = Math.random().toString(36).substr(2)
 var version = null
 var parents = null
@@ -32,13 +34,18 @@ window.errorify = (msg) => {
 }
 
 function on_bytes_received(s) {
+  s = (new TextDecoder()).decode(s)
+
   if (raw_prepend) {
     raw_messages.push(raw_prepend)
     chrome.runtime.sendMessage({ action: "braid_in", data: raw_prepend })
     raw_prepend = null
   }
 
-  s = (new TextDecoder()).decode(s)
+  s = s.replace(/(\r?\n\r?\n)(Version:)/g, (_0, _1, _2) => {
+    return _1 + `${httpx} 200 OK\r\n` + _2
+  })
+
   // console.log(`on_bytes_received[${s.slice(0, 500)}]`)
   raw_messages.push(s)
   chrome.runtime.sendMessage({ action: "braid_in", data: s })
@@ -727,9 +734,9 @@ async function braid_fetch_wrapper(url, params) {
       connect()
       async function connect() {
         try {
-          raw_prepend = `HTTP/1.1 104 Multiresponse
+          raw_prepend = `${httpx} 104 Multiresponse
 
-HTTP/1.1 200 OK
+${httpx} 200 OK
 `
           most_recent_response = await braid_fetch(url, { ...params, parents: params.parents?.() }, (x) => {
             on_bytes_received(x)
@@ -739,7 +746,7 @@ HTTP/1.1 200 OK
 
           function sub() {
             most_recent_response.og_subscribe((...args) => {
-              raw_prepend = 'HTTP/1.1 200 OK\n'
+              raw_prepend = `${httpx} 200 OK\n`
               subscribe_handler?.(...args)
             }, on_error)
           }

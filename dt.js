@@ -1237,9 +1237,7 @@ function OpLog_get_patches(bytes, op_runs) {
 }
 
 function OpLog_create_bytes(version, parents, pos, ins) {
-    //   console.log(
-    //     `args = ${JSON.stringify({ version, parents, pos, del, ins }, null, 4)}`
-    //   )
+    // console.log(`args = ${JSON.stringify({ version, parents, pos, ins }, null, 4)}`)
 
     function write_varint(bytes, value) {
         while (value >= 0x80) {
@@ -1267,129 +1265,122 @@ function OpLog_create_bytes(version, parents, pos, ins) {
 
     let agents = new Set()
     agents.add(version[0])
-    for (let p of parents) if (p.length > 1) agents.add(p[0])
+    for (let p of parents) agents.add(p[0])
     agents = [...agents]
 
     //   console.log(JSON.stringify({ agents, parents }, null, 4));
 
-    let agent_to_i = {};
+    let agent_to_i = {}
     for (let [i, agent] of agents.entries()) {
-        agent_to_i[agent] = i;
-        write_string(agent_names, agent);
+        agent_to_i[agent] = i
+        write_string(agent_names, agent)
     }
 
-    file_info.push(3);
-    write_varint(file_info, agent_names.length);
-    file_info.push(...agent_names);
+    file_info.push(3)
+    write_varint(file_info, agent_names.length)
+    file_info.push(...agent_names)
 
-    bytes.push(1);
-    write_varint(bytes, file_info.length);
-    bytes.push(...file_info);
+    bytes.push(1)
+    write_varint(bytes, file_info.length)
+    bytes.push(...file_info)
 
-    let branch = [];
+    let branch = []
 
-    if (parents[0].length > 1) {
-        let frontier = [];
+    if (parents.length) {
+        let frontier = []
 
         for (let [i, [agent, seq]] of parents.entries()) {
-            let has_more = i < parents.length - 1;
-            let mapped = agent_to_i[agent];
-            let n = ((mapped + 1) << 1) | (has_more ? 1 : 0);
-            write_varint(frontier, n);
-            write_varint(frontier, seq);
+            let has_more = i < parents.length - 1
+            let mapped = agent_to_i[agent]
+            let n = ((mapped + 1) << 1) | (has_more ? 1 : 0)
+            write_varint(frontier, n)
+            write_varint(frontier, seq)
         }
 
-        branch.push(12);
-        write_varint(branch, frontier.length);
-        branch.push(...frontier);
+        branch.push(12)
+        write_varint(branch, frontier.length)
+        branch.push(...frontier)
     }
 
-    bytes.push(10);
-    write_varint(bytes, branch.length);
-    bytes.push(...branch);
+    bytes.push(10)
+    write_varint(bytes, branch.length)
+    bytes.push(...branch)
 
-    let patches = [];
+    let patches = []
 
     if (ins) {
-        let inserted_content_bytes = [];
+        let inserted_content_bytes = []
 
-        inserted_content_bytes.push(0); // ins (not del, which is 1)
+        inserted_content_bytes.push(0) // ins (not del, which is 1)
 
-        inserted_content_bytes.push(13); // "content" enum (rather than compressed)
+        inserted_content_bytes.push(13) // "content" enum (rather than compressed)
 
-        let encoder = new TextEncoder();
-        let utf8Bytes = encoder.encode(ins);
+        let encoder = new TextEncoder()
+        let utf8Bytes = encoder.encode(ins)
 
-        inserted_content_bytes.push(1 + utf8Bytes.length); // length of content chunk
-        inserted_content_bytes.push(4); // "plain text" enum
+        inserted_content_bytes.push(1 + utf8Bytes.length) // length of content chunk
+        inserted_content_bytes.push(4) // "plain text" enum
 
-        for (let b of utf8Bytes)
-            inserted_content_bytes.push(b); // actual text
+        for (let b of utf8Bytes) inserted_content_bytes.push(b) // actual text
 
-        inserted_content_bytes.push(25); // "known" enum
-        inserted_content_bytes.push(1); // length of "known" chunk
-        inserted_content_bytes.push(3); // content of length 1, and we "know" it
+        inserted_content_bytes.push(25) // "known" enum
+        inserted_content_bytes.push(1) // length of "known" chunk
+        inserted_content_bytes.push(3) // content of length 1, and we "know" it
 
-        patches.push(24);
-        write_varint(patches, inserted_content_bytes.length);
-        patches.push(...inserted_content_bytes);
+        patches.push(24)
+        write_varint(patches, inserted_content_bytes.length)
+        patches.push(...inserted_content_bytes)
     }
 
-    if (true) {
-        let version_bytes = [];
+    // write in the version
+    let version_bytes = []
 
-        let [agent, seq] = version;
-        let agent_i = agent_to_i[agent];
-        let jump = seq;
+    let [agent, seq] = version
+    let agent_i = agent_to_i[agent]
+    let jump = seq
 
-        write_varint(version_bytes, ((agent_i + 1) << 1) | (jump != 0 ? 1 : 0));
-        write_varint(version_bytes, 1);
-        if (jump) write_varint(version_bytes, jump << 1);
+    write_varint(version_bytes, ((agent_i + 1) << 1) | (jump != 0 ? 1 : 0))
+    write_varint(version_bytes, 1)
+    if (jump) write_varint(version_bytes, jump << 1)
 
-        patches.push(21);
-        write_varint(patches, version_bytes.length);
-        patches.push(...version_bytes);
-    }
+    patches.push(21)
+    write_varint(patches, version_bytes.length)
+    patches.push(...version_bytes)
 
-    if (true) {
-        let op_bytes = [];
+    // write in "op" bytes (some encoding of position)
+    let op_bytes = []
 
-        write_varint(op_bytes, (pos << 4) | (pos ? 2 : 0) | (ins ? 0 : 4));
+    write_varint(op_bytes, (pos << 4) | (pos ? 2 : 0) | (ins ? 0 : 4))
 
-        patches.push(22);
-        write_varint(patches, op_bytes.length);
-        patches.push(...op_bytes);
-    }
+    patches.push(22)
+    write_varint(patches, op_bytes.length)
+    patches.push(...op_bytes)
 
-    if (true) {
-        let parents_bytes = [];
+    // write in parents
+    let parents_bytes = []
 
-        write_varint(parents_bytes, 1);
+    write_varint(parents_bytes, 1)
 
-        if (parents[0].length > 1) {
-            for (let [i, [agent, seq]] of parents.entries()) {
-                let has_more = i < parents.length - 1;
-                let agent_i = agent_to_i[agent];
-                write_varint(
-                    parents_bytes,
-                    ((agent_i + 1) << 2) | (has_more ? 2 : 0) | 1
-                );
-                write_varint(parents_bytes, seq);
-            }
-        } else write_varint(parents_bytes, 1);
+    if (parents.length) {
+        for (let [i, [agent, seq]] of parents.entries()) {
+            let has_more = i < parents.length - 1
+            let agent_i = agent_to_i[agent]
+            write_varint(parents_bytes, ((agent_i + 1) << 2) | (has_more ? 2 : 0) | 1)
+            write_varint(parents_bytes, seq)
+        }
+    } else write_varint(parents_bytes, 1)
 
-        patches.push(23);
-        write_varint(patches, parents_bytes.length);
-        patches.push(...parents_bytes);
-    }
+    patches.push(23)
+    write_varint(patches, parents_bytes.length)
+    patches.push(...parents_bytes)
 
-    bytes.push(20);
-    write_varint(bytes, patches.length);
-    bytes.push(...patches);
+    // write in patches
+    bytes.push(20)
+    write_varint(bytes, patches.length)
+    bytes.push(...patches)
 
     //   console.log(bytes);
-
-    return bytes;
+    return bytes
 }
 
 function OpLog_diff_from(doc, frontier) {
@@ -1587,7 +1578,7 @@ function parseDT(byte_array) {
                     let num = x >> 2;
 
                     if (x == 1) {
-                        parents.push(["root"]);
+                        // no parents (e.g. parent is "root")
                     } else if (!is_foreign) {
                         parents.push(versions[count - num]);
                     } else {

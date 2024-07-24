@@ -348,7 +348,6 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
           v = encode_version(v[0], v[1] + 1 - patches.reduce((a, b) => a + b.content.length + (b.range[1] - b.range[0]), 0))
 
           let ps = parents
-          if (!ps.length) ps = ["root"]
 
           let offset = 0
           for (let p of patches) {

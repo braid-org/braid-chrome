@@ -198,7 +198,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
         diff_d.style.display = 'block';
         textarea.style.display = 'none';
 
-        const diffArray = OpLog_diff_from(oplog, [from_version]);
+        const diffArray = OpLog_diff_from(oplog, from_version);
         diff_d.innerHTML = '';
         diffArray.forEach(element => {
           let [status, text] = element;

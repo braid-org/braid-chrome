@@ -163,7 +163,7 @@ function raw_update() {
                 let d = make_html(s)
                 d.style.cursor = 'pointer'
                 d.onclick = () => {
-                    backgroundConnection.postMessage({ cmd: "show_diff", from_version: !last ? v_string : null });
+                    backgroundConnection.postMessage({ cmd: "show_diff", from_version: !last ? v.version : null });
                 }
                 return d
             }
@@ -197,7 +197,7 @@ function raw_update() {
                 for (let i = 0; i < 4; i++)
                     id_messages.append(make_html(`<div style="width:10px;height:10px"></div>`))
             }
-            
+
             for (let ii = 0; ii < v.patches.length; ii++) {
                 let patch = v.patches[ii]
 
@@ -216,7 +216,8 @@ function raw_update() {
                     pre.textContent = patch.content
                     container.append(pre)
                 } else {
-                    container.append(make_html(`<div style="display:inline-block;padding:2px;border-radius:3px;background:rgb(241, 64, 42);color:white;font-size:xx-small;padding-left:3px;padding-right:3px">deleted</div>`))
+                    let range = patch.range.match(/\d+/g)?.map(x => 1 * x)
+                    if (range && range.length == 2 && range[0] != range[1]) container.append(make_html(`<div style="display:inline-block;padding:2px;border-radius:3px;background:rgb(241, 64, 42);color:white;font-size:xx-small;padding-left:3px;padding-right:3px">deleted</div>`))
                 }
                 id_messages.append(container)
             }
@@ -240,7 +241,7 @@ function raw_update() {
 
             v_to_realv[v_string] = v_string
 
-            if (v_string == 'root') continue;
+            if (v_string == '') continue;
 
             let [actor, seq] = v_string.split('-')
             seq = 1 * seq
@@ -274,10 +275,12 @@ function raw_update() {
             let y = version_ys[v_string]
 
             let ps = v.parents ?? []
+            if (ps.length == 0) ps = ['']
             if (ps.length > 1 && v_to_realv['' + v.parents]) ps = ['' + v.parents]
             for (let p of ps) {
                 let pointing_to_subversion = v_to_realv[p] != p
                 p = v_to_realv[p]
+                if (p == null) continue
                 let h = y - version_ys[p]
                 let px = version_xs[p]
 
@@ -340,7 +343,7 @@ function raw_update() {
 }
 
 function isScrolledToBottom(element) {
-  return element.scrollHeight - element.scrollTop === element.clientHeight;
+    return element.scrollHeight - element.scrollTop === element.clientHeight;
 }
 
 function make_html(s) {

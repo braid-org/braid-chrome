@@ -154,6 +154,20 @@ function raw_update() {
             versions = good_versions
         }
 
+        // find leaves
+        let leaves = new Set(versions.map(v => '' + v.version))
+        for (let v of versions)
+            if (v.parents) {
+                for (let p of v.parents) leaves.delete(p)
+                leaves.delete('' + v.parents)
+            }
+        if (leaves.size > 1)
+            versions.push({
+                version: 'final merge',
+                parents: [...leaves],
+                patches: []
+            })
+
         for (let i = 0; i < versions.length; i++) {
             let v = versions[i]
             let v_string = '' + v.version

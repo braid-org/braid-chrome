@@ -331,6 +331,8 @@ function raw_update() {
             last_v = v_string
         }
 
+        if (versions[versions.length - 1].version === 'final merge') versions.pop()
+
         // let dd = make_html('<pre></pre>')
         // dd.textContent = JSON.stringify(v_to_realv, null, 4)
         // id_messages.append(dd)        

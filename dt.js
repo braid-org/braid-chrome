@@ -1385,7 +1385,7 @@ function OpLog_create_bytes(version, parents, pos, ins) {
 
 function OpLog_diff_from(doc, frontier) {
     let s = OpLog_get(doc, frontier);
-    let a = s.split("");
+    let a = [...s];
     let far_left = '';
     for (let xf of doc.getXFSince(OpLog_get.last_local_version)) {
         console.log(`xf = ${JSON.stringify(xf, null, 4)}`);
@@ -1393,25 +1393,24 @@ function OpLog_diff_from(doc, frontier) {
             a.splice(
                 xf.start,
                 0,
-                ...xf.content.split("").map((c) => `+${c}`)
+                ...[...xf.content].map((c) => ['+', c, ''])
             );
         } else if (xf.kind == "Del") {
             let removed = a.splice(xf.start, xf.end - xf.start);
             removed = removed
                 .map((c) => {
-                    if (c.length == 1) return c;
-                    if (c[0] == "+") return c.slice(2);
-                    return c.slice(1);
+                    if (typeof c === 'string') return c;
+                    if (c[0] === "+") return c[2];
+                    return c[1] + c[2];
                 })
                 .join("");
 
             if (xf.start == 0) {
                 far_left += removed
             } else {
-                if (a[xf.start - 1].length == 1) {
-                    a[xf.start - 1] = ` ${a[xf.start - 1]}`
-                }
-                a[xf.start - 1] += removed
+                if (typeof a[xf.start - 1] === 'string')
+                    a[xf.start - 1] = [' ', a[xf.start - 1], '']
+                a[xf.start - 1][2] += removed
             }
         }
     }
@@ -1419,7 +1418,7 @@ function OpLog_diff_from(doc, frontier) {
     let diff = []
     if (far_left) diff.push([-1, far_left])
     for (let aa of a) {
-        if (aa.length == 1) {
+        if (typeof aa === 'string') {
             if (diff[diff.length - 1]?.[0] == 0) {
                 diff[diff.length - 1][1] += aa
             } else {
@@ -1439,11 +1438,11 @@ function OpLog_diff_from(doc, frontier) {
             }
         }
 
-        if (aa.length > 2) {
+        if (Array.isArray(aa)) {
             if (diff[diff.length - 1]?.[0] == -1) {
-                diff[diff.length - 1][1] += aa.slice(2)
+                diff[diff.length - 1][1] += aa[2]
             } else {
-                diff.push([-1, aa.slice(2)])
+                diff.push([-1, aa[2]])
             }
         }
     }
@@ -1482,7 +1481,9 @@ function OpLog_get(doc, frontier) {
         let parents = parentss[i].map((x) => x.join("-"));
         let start = op_run.start;
         let end = start + 1;
-        let content = op_run.content?.[0];
+        if (op_run.content) op_run.content = [...op_run.content];
+        let content = []
+        if (op_run.content) content.push(op_run.content[0])
 
         let len = op_run.end - op_run.start;
         let base_i = i;
@@ -1503,16 +1504,16 @@ function OpLog_get(doc, frontier) {
                             OpLog_create_bytes(
                                 version,
                                 parentss[i].map((x) => x.join("-")),
-                                content ? start + (i - base_i) : start,
-                                content?.[0]
+                                content.length ? start + (i - base_i) : start,
+                                content[0]
                             )
                         );
                     }
                     if (op_run.content) content = content.slice(1);
                 }
-                content = "";
+                content = [];
             }
-            if (op_run.content) content += op_run.content[j];
+            if (op_run.content) content.push(op_run.content[j]);
         }
     });
     return new_doc.get();

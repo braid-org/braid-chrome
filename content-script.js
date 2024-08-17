@@ -308,7 +308,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
       });
 
       response.subscribe(({ version, parents, body, patches }) => {
-        if (textarea.hasAttribute("readonly")) {
+        if (textarea.hasAttribute("readonly") && headers.editable === 'true') {
           textarea.removeAttribute("readonly")
           textarea.removeAttribute('disabled')
           // textarea.focus()
@@ -418,10 +418,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
       get_parents = () => current_version
 
       response.subscribe(update => {
-
-        // console.log(`got update: ${JSON.stringify(update)}`)
-
-        if (textarea.hasAttribute("readonly")) {
+        if (textarea.hasAttribute("readonly") && headers.editable === 'true') {
           textarea.removeAttribute("readonly")
           textarea.removeAttribute('disabled')
           // textarea.focus()
@@ -529,7 +526,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
 
       response.subscribe(({ version, parents, body, patches }) => {
 
-        if (textarea.hasAttribute("readonly")) {
+        if (textarea.hasAttribute("readonly") && headers.editable === 'true') {
           textarea.removeAttribute("readonly")
           textarea.removeAttribute('disabled')
         }

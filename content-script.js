@@ -173,10 +173,9 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
       let last_text = "";
       let last_text_code_points = 0;
 
-      let sent_count = 0;
-      let ack_count = 0;
+      let outstandings = make_linklist();
 
-      oplog = new OpLog(peer);
+      oplog = new Doc(peer);
 
       on_show_diff = (from_version) => {
         var scrollPos = (window.getComputedStyle(diff_d).display === "none") ? {
@@ -273,13 +272,11 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
           //   console.log(JSON.stringify(p));
 
           p.version = decode_version(p.version)
+          let start_version_seq = p.version[1]
           if (p.end - p.start < 1) throw 'unexpected patch with nothing'
           p.version[1] += p.end - p.start - 1
           p.version = p.version.join('-')
           p.version = [p.version]
-
-          textarea.style.caretColor = 'orange'
-          console.log(`s counts: ${ack_count}/${sent_count}`);
 
           let ops = {
             retry: true,
@@ -299,16 +296,48 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
           };
           versions.push(ops)
           chrome.runtime.sendMessage({ action: "new_version", version: ops })
-          sent_count++
+
+          let outstanding = {
+            version: p.version,
+            ac: new AbortController(),
+          }
+          ops.signal = outstanding.ac.signal
+          outstandings.push(outstanding)
           textarea.style.caretColor = 'red'
-          await braid_fetch_wrapper(window.location.href, ops);
-          ack_count++
-          if (ack_count == sent_count) textarea.style.caretColor = ''
+
+          rest()
+          async function rest() {
+            try {
+              await braid_fetch_wrapper(window.location.href, ops);
+              outstandings.remove(ops)
+            } catch (e) {
+              if (e === 'access denied') {
+                let x = outstanding
+                while (x) {
+                  if (x != outstanding) x.ac.abort()
+                  for (let i = versions.length - 1; i >= 0; i--) {
+                    if (versions[i].version.length === x.version.length && versions[i].version.every((v, i) => v === x.version[i])) {
+                      versions.splice(i, 1)
+                      break
+                    }
+                  }
+                  chrome.runtime.sendMessage({ action: "new_version", remove_version: x.version })
+                  outstandings.remove(x)
+                  x = x.next
+                }
+
+                oplog = OpLog_get(oplog, null, peer, start_version_seq)
+                textarea.value = last_text = oplog.get()
+                last_text_code_points = count_code_points(last_text)
+              }
+            }
+            if (!outstandings.size) textarea.style.caretColor = ''
+          }          
         }
       });
 
       response.subscribe(({ version, parents, body, patches }) => {
-        if (textarea.hasAttribute("readonly") && headers.editable === 'true') {
+        if (textarea.hasAttribute("readonly")) {
           textarea.removeAttribute("readonly")
           textarea.removeAttribute('disabled')
           // textarea.focus()
@@ -353,7 +382,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
           for (let p of patches) {
             // delete
             for (let i = p.range[0]; i < p.range[1]; i++) {
-              oplog.addFromBytes(OpLog_create_bytes(v, ps, p.range[1] - 1 + offset, null))
+              oplog.mergeBytes(OpLog_create_bytes(v, ps, p.range[1] - 1 + offset, null))
               offset--
               ps = [v]
               v = decode_version(v)
@@ -362,7 +391,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
             // insert
             for (let i = 0; i < p.content?.length ?? 0; i++) {
               let c = p.content[i]
-              oplog.addFromBytes(OpLog_create_bytes(v, ps, p.range[1] + offset, c))
+              oplog.mergeBytes(OpLog_create_bytes(v, ps, p.range[1] + offset, c))
               offset++
               ps = [v]
               v = decode_version(v)
@@ -381,7 +410,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
         let [new_text, new_sel] = applyChanges(
           textarea.value,
           sel,
-          oplog.getXFSince(v)
+          oplog.xfSince(v)
         );
 
         textarea.value = last_text = new_text;
@@ -412,13 +441,13 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
 
       var current_version = []
       var last_seen_state = null
-      var outstanding_changes = 0
+      var outstanding_changes = make_linklist()
       var max_outstanding_changes = 10
 
       get_parents = () => current_version
 
       response.subscribe(update => {
-        if (textarea.hasAttribute("readonly") && headers.editable === 'true') {
+        if (textarea.hasAttribute("readonly")) {
           textarea.removeAttribute("readonly")
           textarea.removeAttribute('disabled')
           // textarea.focus()
@@ -452,11 +481,18 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
       // Wire up the Textarea
       textarea.value = ""
       textarea.oninput = async e => {
-        if (outstanding_changes >= max_outstanding_changes) return
+        if (outstanding_changes.size >= max_outstanding_changes) return
         while (true) {
           var { patches, version, state } = produce_local_update(last_seen_state)
           if (!patches.length) return
           version = [version]
+
+          var outstanding_change = {
+            restore_state: last_seen_state,
+            restore_version: current_version,
+            ac: new AbortController(),
+          }
+          outstanding_changes.push(outstanding_change)
 
           var parents = current_version
           current_version = version
@@ -467,23 +503,44 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
             method: "PUT",
             retry: true,
             version, parents, patches,
-            peer
+            peer,
+            signal: outstanding_change.ac.signal,
           }
           versions.push(ops)
           chrome.runtime.sendMessage({ action: "new_version", version: ops })
 
-          outstanding_changes++
           textarea.style.caretColor = 'red'
-          await braid_fetch_wrapper(window.location.href, ops)
-          outstanding_changes--
-          if (!outstanding_changes) textarea.style.caretColor = ''
+          try {
+            await braid_fetch_wrapper(window.location.href, ops)
+            outstanding_changes.remove(outstanding_change)
+          } catch (e) {
+            if (e === 'access denied') {
+              var start_size = outstanding_changes.size
+              let x = outstanding_change.next
+              while (x) {
+                x.ac.abort()
+                versions.pop()
+                outstanding_changes.remove(x)
+                x = x.next
+              }
+              versions.pop()
+              outstanding_changes.remove(outstanding_change)
+              chrome.runtime.sendMessage({ action: "new_version", remove_count: start_size - outstanding_changes.size })
+
+              textarea.value = last_seen_state = outstanding_change.restore_state
+              current_version = outstanding_change.restore_version
+            }
+          }
+          if (!outstanding_changes.size) textarea.style.caretColor = ''
         }
       }
     } else if (merge_type) {
       throw 'unsupported merge-type: ' + merge_type
     } else if (content_type == 'application/json') {
       var doc = null
+      var last_version = []
       var outstanding_changes = 0
+      var change_stack = make_linklist()
 
       function set_style_good(good) {
         textarea.style.background = good ? '' : 'pink'
@@ -501,22 +558,46 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
             method: "PUT",
             retry: true,
             version: ['default-' + default_version_count++],
-            parents: [],
+            parents: last_version,
             patches: [{ unit: 'json', range: '', content: JSON.stringify(doc) }],
             peer
           }
           versions.push(new_version)
           chrome.runtime.sendMessage({ action: "new_version", version: new_version })
 
+          last_version = new_version.version
+          let change = {...new_version}
+          change_stack.push(change)
+
           outstanding_changes++
           textarea.style.caretColor = 'red'
-          await braid_fetch_wrapper(window.location.href, {
-            headers: { "Content-Type": content_type },
-            method: "PUT",
-            retry: true,
-            version: ['default-' + default_version_count++], parents: [], patches: [{ unit: 'json', range: '', content: JSON.stringify(doc) }],
-            peer
-          })
+          try {
+            await braid_fetch_wrapper(window.location.href, new_version)
+            change_stack.remove_before(change)
+          } catch (e) {
+            if (e === 'access denied') {
+              for (let i = versions.length - 1; i >= 0; i--) {
+                if (versions[i].version.length === change.version.length && versions[i].version.every((v, i) => v === change.version[i])) {
+                  versions.splice(i, 1)
+                  if (versions[i] && versions[i].parents[0] == change.version[0]) {
+                    versions[i].parents = change.parents
+                  }
+                  chrome.runtime.sendMessage({ action: "new_version", override_versions: versions })
+                  break
+                }
+              }
+
+              change_stack.remove(change)
+              doc = null
+              let cur = change_stack.next
+              while (cur) {
+                for (let p of cur.patches)
+                  doc = apply_patch(doc, p.range, JSON.parse(p.content))
+                cur = cur.next
+              }
+              textarea.value = JSON.stringify(doc)
+            }
+          }
           outstanding_changes--
           if (!outstanding_changes) textarea.style.caretColor = ''
         } catch (e) {
@@ -526,7 +607,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
 
       response.subscribe(({ version, parents, body, patches }) => {
 
-        if (textarea.hasAttribute("readonly") && headers.editable === 'true') {
+        if (textarea.hasAttribute("readonly")) {
           textarea.removeAttribute("readonly")
           textarea.removeAttribute('disabled')
         }
@@ -539,8 +620,8 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
         //   )}`
         // );
 
-        if (!version) version = 'default-' + default_version_count++
-        if (!parents) parents = []
+        if (!version) version = ['default-' + default_version_count++]
+        if (!parents) parents = last_version
 
         try {
           let new_version = {
@@ -559,18 +640,20 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
               content: body
             }]
           } else {
-            doc = apply_patch(doc, patches[0].range, JSON.parse(patches[0].content))
+            for (let p of patches)
+              doc = apply_patch(doc, p.range, JSON.parse(p.content))
           }
+
+          last_version = new_version.version
+          let change = {...new_version}
+          change_stack.push(change)
+          if (change.patches[0].range === '') change_stack.remove_before(change)
 
           versions.push(new_version)
           chrome.runtime.sendMessage({ action: "new_version", version: new_version })
         } catch (e) {
           console.log(`eeee = ${e}`)
           console.log(`eeee = ${e.stack}`)
-
-          doc = apply_patch(doc, patches[0].range, JSON.parse(patches[0].content))
-
-          // location.reload()
         }
         textarea.value = JSON.stringify(doc)
         set_style_good(true)
@@ -767,7 +850,7 @@ ${httpx} 200 OK
       }
     })
   } else {
-    return new Promise((done) => {
+    return new Promise((done, fail) => {
       send()
       async function send() {
         try {
@@ -775,9 +858,11 @@ ${httpx} 200 OK
             on_bytes_received(x)
             set_subscription_online(true)
           }, on_bytes_going_out)
+          if (res.status === 401 || res.status === 403) return fail('access denied')
           if (!res.ok) throw "status not ok: " + res.status
           done(res)
         } catch (e) {
+          if (e.name === 'AbortError') return fail('abort')
           setTimeout(send, waitTime)
           waitTime = Math.min(waitTime * 2, 3000)
         }
@@ -874,4 +959,54 @@ function applyDomDiff(dest, diff) {
       offsets.set(node, (offsets.get(node) ?? 0) - 1)
     }
   })
+}
+
+function make_linklist() {
+  let self = {
+    next: null,
+    last: null,
+    size: 0,
+  }
+
+  self.push = x => {
+    if (self.last) self.last.next = x
+    else self.next = x
+    x.prev = self.last
+    x.next = null
+    self.last = x
+
+    self.size++
+  }
+
+  self.remove = x => {
+    if (x.removed) return
+    x.removed = true
+
+    if (x.prev) x.prev.next = x.next
+    else self.next = x.next
+
+    if (x.next) x.next.prev = x.prev
+    else self.last = x.prev
+
+    self.size--
+  }
+
+  self.remove_before = x => {
+    let current = self.next
+    let itemsRemoved = 0
+
+    while (current !== x && current !== null) {
+      current.removed = true
+      itemsRemoved++
+      current = current.next
+    }
+
+    if (current === x) {
+      x.prev = null
+      self.next = x
+      self.size -= itemsRemoved
+    } else throw 'not found'
+  }  
+
+  return self
 }

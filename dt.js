@@ -1384,7 +1384,7 @@ function OpLog_create_bytes(version, parents, pos, ins) {
 }
 
 function OpLog_diff_from(doc, frontier) {
-    let s = OpLog_get(doc, frontier);
+    let s = OpLog_get(doc, frontier).get();
     let a = [...s];
     let far_left = '';
     for (let xf of doc.getXFSince(OpLog_get.last_local_version)) {
@@ -1450,31 +1450,39 @@ function OpLog_diff_from(doc, frontier) {
     return diff;
 }
 
-function OpLog_get(doc, frontier) {
-    if (Array.isArray(frontier))
-        frontier = Object.fromEntries(frontier.map((x) => [x, true]));
-
-    let local_version = [];
+function OpLog_get(doc, frontier, exclude_peer, exclude_seq) {
     let [agents, versions, parentss] = parseDT([...doc.toBytes()]);
-    for (let i = 0; i < versions.length; i++) {
-        if (frontier[versions[i].join("-")]) {
-            local_version.push(i);
-        }
-    }
-    local_version = new Uint32Array(local_version);
-    OpLog_get.last_local_version = local_version;
-
     let after_versions = {};
-    if (true) {
-        let [agents, versions, parentss] = parseDT([
-            ...doc.getPatchSince(local_version),
-        ]);
+
+    if (frontier) {
+        if (Array.isArray(frontier))
+            frontier = Object.fromEntries(frontier.map((x) => [x, true]));
+
+        let local_version = [];
         for (let i = 0; i < versions.length; i++) {
-            after_versions[versions[i].join("-")] = true;
+            if (frontier[versions[i].join("-")]) {
+                local_version.push(i);
+            }
+        }
+        local_version = new Uint32Array(local_version);
+        OpLog_get.last_local_version = local_version;
+
+        if (true) {
+            let [agents, versions, parentss] = parseDT([
+                ...doc.getPatchSince(local_version),
+            ]);
+            for (let i = 0; i < versions.length; i++) {
+                after_versions[versions[i].join("-")] = true;
+            }
+        }
+    } else {
+        for (let i = 0; i < versions.length; i++) {
+            if (versions[i][0] === exclude_peer && versions[i][1] >= exclude_seq)
+                after_versions[versions[i].join("-")] = true;
         }
     }
 
-    let new_doc = new Doc();
+    let new_doc = new Doc(exclude_peer);
     let op_runs = doc.getOpsSince([]);
     let i = 0;
     op_runs.forEach((op_run) => {
@@ -1516,7 +1524,7 @@ function OpLog_get(doc, frontier) {
             if (op_run.content) content.push(op_run.content[j]);
         }
     });
-    return new_doc.get();
+    return new_doc;
 }
 
 function parseDT(byte_array) {

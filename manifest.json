@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Braid Chrome Extension",
-  "version": "0.0.229",
+  "version": "0.0.230",
   "permissions": [
     "activeTab",
     "tabs",

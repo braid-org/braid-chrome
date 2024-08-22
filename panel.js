@@ -79,7 +79,17 @@ function add_message(message) {
         get_failed = message.get_failed
         update()
     } else if (message.action == 'new_version') {
-        versions.push(message.version)
+        if (message.remove_count) versions.splice(versions.length - message.remove_count, message.remove_count)
+        if (message.remove_version) {
+            for (let i = versions.length - 1; i >= 0; i--) {
+                if (versions[i].version.length === message.remove_version.length && versions[i].version.every((v, i) => v === message.remove_version[i])) {
+                    versions.splice(i, 1)
+                    break
+                }
+            }
+        }
+        if (message.version) versions.push(message.version)
+        if (message.override_versions) versions = message.override_versions
         update()
     } else if (message.action == 'new_headers') {
         headers = message.headers

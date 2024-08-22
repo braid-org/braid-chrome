@@ -1387,7 +1387,7 @@ function OpLog_diff_from(doc, frontier) {
     let s = OpLog_get(doc, frontier).get();
     let a = [...s];
     let far_left = '';
-    for (let xf of doc.getXFSince(OpLog_get.last_local_version)) {
+    for (let xf of doc.xfSince(OpLog_get.last_local_version)) {
         console.log(`xf = ${JSON.stringify(xf, null, 4)}`);
         if (xf.kind == "Ins") {
             a.splice(

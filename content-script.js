@@ -261,14 +261,11 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
         last_text = textarea.value;
         last_text_code_points = commonStart_codePoints + commonEnd_codePoints + count_code_points(stuffToInsert)
 
-        let v = oplog.getLocalVersion();
+        let v = oplog.getRemoteVersion().map(v => v.join('-'));
         if (numCodePointsToDelete) oplog.del(commonStart_codePoints, numCodePointsToDelete);
         if (stuffToInsert) oplog.ins(commonStart_codePoints, stuffToInsert);
 
-        for (let p of OpLog_get_patches(
-          oplog.getPatchSince(v),
-          oplog.getOpsSince(v)
-        )) {
+        for (let p of dt_get_patches(oplog, v)) {
           //   console.log(JSON.stringify(p));
 
           p.version = decode_version(p.version)
@@ -326,7 +323,11 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
                   x = x.next
                 }
 
-                oplog = OpLog_get(oplog, null, peer, start_version_seq)
+                oplog = dt_get(oplog, oplog.getRemoteVersion().map(v => {
+                  if (v[0] === peer) v[1] = start_version_seq - 1
+                  return v.join('-')
+                }))
+
                 textarea.value = last_text = oplog.get()
                 last_text_code_points = count_code_points(last_text)
               }
@@ -382,7 +383,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
           for (let p of patches) {
             // delete
             for (let i = p.range[0]; i < p.range[1]; i++) {
-              oplog.mergeBytes(OpLog_create_bytes(v, ps, p.range[1] - 1 + offset, null))
+              oplog.mergeBytes(dt_create_bytes(v, ps, p.range[1] - 1 + offset, null))
               offset--
               ps = [v]
               v = decode_version(v)
@@ -391,7 +392,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
             // insert
             for (let i = 0; i < p.content?.length ?? 0; i++) {
               let c = p.content[i]
-              oplog.mergeBytes(OpLog_create_bytes(v, ps, p.range[1] + offset, c))
+              oplog.mergeBytes(dt_create_bytes(v, ps, p.range[1] + offset, c))
               offset++
               ps = [v]
               v = decode_version(v)

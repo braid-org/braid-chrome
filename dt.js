@@ -1186,25 +1186,35 @@ async function __wbg_init(input) {
 
 ///////////////
 
-function OpLog_get_patches(bytes, op_runs) {
-    console.log(`op_runs = `, op_runs);
+function dt_get(doc, version, agent = null) {
+    let bytes = doc.toBytes()
+    dt_get.last_doc = doc = Doc.fromBytes(bytes, agent)
 
-    let [agents, versions, parentss] = parseDT([...bytes]);
+    let [_agents, versions, parentss] = dt_parse([...bytes])
 
-    // console.log(JSON.stringify({ agents, versions, parentss }, null, 4))
+    let frontier = {}
+    version.forEach((x) => frontier[x] = true)
 
-    let i = 0;
-    let patches = [];
+    let local_version = []
+    for (let i = 0; i < versions.length; i++)
+        if (frontier[versions[i].join("-")]) local_version.push(i)
+    dt_get.last_local_version = local_version = new Uint32Array(local_version)
+
+    let after_versions = {}
+    let [_, after_versions_array, __] = dt_parse([...doc.getPatchSince(local_version)])
+    for (let v of after_versions_array) after_versions[v.join("-")] = true
+
+    let new_doc = new Doc(agent)
+    let op_runs = doc.getOpsSince([])
+
+    let i = 0
     op_runs.forEach((op_run) => {
-        let version = versions[i].join('-')
-        let parents = parentss[i].map((x) => x.join('-'))
-        let start = op_run.start
-        let end = start + 1
         if (op_run.content) op_run.content = [...op_run.content]
-        let content = op_run.content?.[0]
+
         let len = op_run.end - op_run.start
+        let base_i = i
         for (let j = 1; j <= len; j++) {
-            let I = i + j
+            let I = base_i + j
             if (
                 j == len ||
                 parentss[I].length != 1 ||
@@ -1213,31 +1223,198 @@ function OpLog_get_patches(bytes, op_runs) {
                 versions[I][0] != versions[I - 1][0] ||
                 versions[I][1] != versions[I - 1][1] + 1
             ) {
+                for (; i < I; i++) {
+                    let version = versions[i].join("-")
+                    if (!after_versions[version]) new_doc.mergeBytes(
+                        dt_create_bytes(
+                            version,
+                            parentss[i].map((x) => x.join("-")),
+                            op_run.fwd ?
+                                (op_run.content ?
+                                    op_run.start + (i - base_i) :
+                                    op_run.start) :
+                                op_run.end - 1 - (i - base_i),
+                            op_run.content?.[i - base_i]
+                        )
+                    )
+                }
+            }
+        }
+    })
+    return new_doc
+}
+
+function dt_get_patches(doc, version = null) {
+    let bytes = doc.toBytes()
+    doc = Doc.fromBytes(bytes)
+
+    let [_agents, versions, parentss] = dt_parse([...bytes])
+
+    let op_runs = []
+    if (version) {
+        let frontier = {}
+        version.forEach((x) => frontier[x] = true)
+        let local_version = []
+        for (let i = 0; i < versions.length; i++)
+            if (frontier[versions[i].join("-")]) local_version.push(i)
+        let after_bytes = doc.getPatchSince(new Uint32Array(local_version))
+
+        ;[_agents, versions, parentss] = dt_parse([...after_bytes])
+
+        let before_doc = dt_get(doc, version)
+        let before_doc_frontier = before_doc.getLocalVersion()
+
+        before_doc.mergeBytes(after_bytes)
+        op_runs = before_doc.getOpsSince(before_doc_frontier)
+    } else op_runs = doc.getOpsSince([])
+
+    let i = 0
+    let patches = []
+    op_runs.forEach((op_run) => {
+        let version = versions[i].join("-")
+        let parents = parentss[i].map((x) => x.join("-")).sort()
+        let start = op_run.start
+        let end = start + 1
+        if (op_run.content) op_run.content = [...op_run.content]
+        let len = op_run.end - op_run.start
+        for (let j = 1; j <= len; j++) {
+            let I = i + j
+            if (
+                (!op_run.content && op_run.fwd) ||
+                j == len ||
+                parentss[I].length != 1 ||
+                parentss[I][0][0] != versions[I - 1][0] ||
+                parentss[I][0][1] != versions[I - 1][1] ||
+                versions[I][0] != versions[I - 1][0] ||
+                versions[I][1] != versions[I - 1][1] + 1
+            ) {
+                let s = op_run.fwd ?
+                    (op_run.content ?
+                        start :
+                        op_run.start) :
+                    (op_run.start + (op_run.end - end))
+                let e = op_run.fwd ?
+                    (op_run.content ?
+                        end :
+                        op_run.start + (end - start)) :
+                    (op_run.end - (start - op_run.start))
                 patches.push({
                     version,
                     parents,
                     unit: "text",
-                    range: content ? `[${start}:${start}]` : `[${start}:${end}]`,
-                    content: content ?? "",
-                    start,
-                    end
+                    range: op_run.content ? `[${s}:${s}]` : `[${s}:${e}]`,
+                    content: op_run.content?.slice(start - op_run.start, end - op_run.start).join("") ?? "",
+                    start: s,
+                    end: e,
                 })
                 if (j == len) break
-                version = versions[I].join('-')
-                parents = parentss[I].map((x) => x.join('-'))
+                version = versions[I].join("-")
+                parents = parentss[I].map((x) => x.join("-")).sort()
                 start = op_run.start + j
-                content = ""
             }
             end++
-            if (op_run.content) content += op_run.content[j]
         }
         i += len
     })
     return patches
 }
 
-function OpLog_create_bytes(version, parents, pos, ins) {
-    // console.log(`args = ${JSON.stringify({ version, parents, pos, ins }, null, 4)}`)
+function dt_parse(byte_array) {
+    if (new TextDecoder().decode(new Uint8Array(byte_array.splice(0, 8))) !== "DMNDTYPS") throw new Error("dt parse error, expected DMNDTYPS")
+
+    if (byte_array.shift() != 0) throw new Error("dt parse error, expected version 0")
+
+    let agents = []
+    let versions = []
+    let parentss = []
+
+    while (byte_array.length) {
+        let id = byte_array.shift()
+        let len = read_varint(byte_array)
+        if (id == 1) {
+        } else if (id == 3) {
+            let goal = byte_array.length - len
+            while (byte_array.length > goal) {
+                agents.push(read_string(byte_array))
+            }
+        } else if (id == 20) {
+        } else if (id == 21) {
+            let seqs = {}
+            let goal = byte_array.length - len
+            while (byte_array.length > goal) {
+                let part0 = read_varint(byte_array)
+                let has_jump = part0 & 1
+                let agent_i = (part0 >> 1) - 1
+                let run_length = read_varint(byte_array)
+                let jump = 0
+                if (has_jump) {
+                    let part2 = read_varint(byte_array)
+                    jump = part2 >> 1
+                    if (part2 & 1) jump *= -1
+                }
+                let base = (seqs[agent_i] || 0) + jump
+
+                for (let i = 0; i < run_length; i++) {
+                    versions.push([agents[agent_i], base + i])
+                }
+                seqs[agent_i] = base + run_length
+            }
+        } else if (id == 23) {
+            let count = 0
+            let goal = byte_array.length - len
+            while (byte_array.length > goal) {
+                let run_len = read_varint(byte_array)
+
+                let parents = []
+                let has_more = 1
+                while (has_more) {
+                    let x = read_varint(byte_array)
+                    let is_foreign = 0x1 & x
+                    has_more = 0x2 & x
+                    let num = x >> 2
+
+                    if (x == 1) {
+                        // no parents (e.g. parent is "root")
+                    } else if (!is_foreign) {
+                        parents.push(versions[count - num])
+                    } else {
+                        parents.push([agents[num - 1], read_varint(byte_array)])
+                    }
+                }
+                parentss.push(parents)
+                count++
+
+                for (let i = 0; i < run_len - 1; i++) {
+                    parentss.push([versions[count - 1]])
+                    count++
+                }
+            }
+        } else {
+            byte_array.splice(0, len)
+        }
+    }
+
+    function read_string(byte_array) {
+        return new TextDecoder().decode(new Uint8Array(byte_array.splice(0, read_varint(byte_array))))
+    }
+
+    function read_varint(byte_array) {
+        let result = 0
+        let shift = 0
+        while (true) {
+            if (byte_array.length === 0) throw new Error("byte array does not contain varint")
+
+            let byte_val = byte_array.shift()
+            result |= (byte_val & 0x7f) << shift
+            if ((byte_val & 0x80) == 0) return result
+            shift += 7
+        }
+    }
+
+    return [agents, versions, parentss]
+}
+
+function dt_create_bytes(version, parents, pos, ins) {
 
     function write_varint(bytes, value) {
         while (value >= 0x80) {
@@ -1383,11 +1560,11 @@ function OpLog_create_bytes(version, parents, pos, ins) {
     return bytes
 }
 
-function OpLog_diff_from(doc, frontier) {
-    let s = OpLog_get(doc, frontier).get();
+function OpLog_diff_from(doc, version) {
+    let s = dt_get(doc, version).get();
     let a = [...s];
     let far_left = '';
-    for (let xf of doc.xfSince(OpLog_get.last_local_version)) {
+    for (let xf of dt_get.last_doc.xfSince(dt_get.last_local_version)) {
         console.log(`xf = ${JSON.stringify(xf, null, 4)}`);
         if (xf.kind == "Ins") {
             a.splice(
@@ -1448,186 +1625,6 @@ function OpLog_diff_from(doc, frontier) {
     }
 
     return diff;
-}
-
-function OpLog_get(doc, frontier, exclude_peer, exclude_seq) {
-    let [agents, versions, parentss] = parseDT([...doc.toBytes()]);
-    let after_versions = {};
-
-    if (frontier) {
-        if (Array.isArray(frontier))
-            frontier = Object.fromEntries(frontier.map((x) => [x, true]));
-
-        let local_version = [];
-        for (let i = 0; i < versions.length; i++) {
-            if (frontier[versions[i].join("-")]) {
-                local_version.push(i);
-            }
-        }
-        local_version = new Uint32Array(local_version);
-        OpLog_get.last_local_version = local_version;
-
-        if (true) {
-            let [agents, versions, parentss] = parseDT([
-                ...doc.getPatchSince(local_version),
-            ]);
-            for (let i = 0; i < versions.length; i++) {
-                after_versions[versions[i].join("-")] = true;
-            }
-        }
-    } else {
-        for (let i = 0; i < versions.length; i++) {
-            if (versions[i][0] === exclude_peer && versions[i][1] >= exclude_seq)
-                after_versions[versions[i].join("-")] = true;
-        }
-    }
-
-    let new_doc = new Doc(exclude_peer);
-    let op_runs = doc.getOpsSince([]);
-    let i = 0;
-    op_runs.forEach((op_run) => {
-        let parents = parentss[i].map((x) => x.join("-"));
-        let start = op_run.start;
-        let end = start + 1;
-        if (op_run.content) op_run.content = [...op_run.content];
-        let content = []
-        if (op_run.content) content.push(op_run.content[0])
-
-        let len = op_run.end - op_run.start;
-        let base_i = i;
-        for (let j = 1; j <= len; j++) {
-            let I = base_i + j;
-            if (
-                j == len ||
-                parentss[I].length != 1 ||
-                parentss[I][0][0] != versions[I - 1][0] ||
-                parentss[I][0][1] != versions[I - 1][1] ||
-                versions[I][0] != versions[I - 1][0] ||
-                versions[I][1] != versions[I - 1][1] + 1
-            ) {
-                for (; i < I; i++) {
-                    let version = versions[i].join("-");
-                    if (!after_versions[version]) {
-                        new_doc.mergeBytes(
-                            OpLog_create_bytes(
-                                version,
-                                parentss[i].map((x) => x.join("-")),
-                                content.length ? start + (i - base_i) : start,
-                                content[0]
-                            )
-                        );
-                    }
-                    if (op_run.content) content = content.slice(1);
-                }
-                content = [];
-            }
-            if (op_run.content) content.push(op_run.content[j]);
-        }
-    });
-    return new_doc;
-}
-
-function parseDT(byte_array) {
-    if (
-        new TextDecoder().decode(new Uint8Array(byte_array.splice(0, 8))) !==
-        "DMNDTYPS"
-    )
-        errorify("dt parse error, expected DMNDTYPS");
-
-    if (byte_array.shift() != 0)
-        errorify("dt parse error, expected version 0");
-
-    let agents = [];
-    let versions = [];
-    let parentss = [];
-
-    while (byte_array.length) {
-        let id = byte_array.shift();
-        let len = read_varint(byte_array);
-        if (id == 1) {
-        } else if (id == 3) {
-            let goal = byte_array.length - len;
-            while (byte_array.length > goal) {
-                agents.push(read_string(byte_array));
-            }
-        } else if (id == 20) {
-        } else if (id == 21) {
-            let seqs = {};
-            let goal = byte_array.length - len;
-            while (byte_array.length > goal) {
-                let part0 = read_varint(byte_array);
-                let has_jump = part0 & 1;
-                let agent_i = (part0 >> 1) - 1;
-                let run_length = read_varint(byte_array);
-                let jump = 0;
-                if (has_jump) {
-                    let part2 = read_varint(byte_array);
-                    jump = part2 >> 1;
-                    if (part2 & 1) jump *= -1;
-                }
-                let base = (seqs[agent_i] || 0) + jump;
-
-                for (let i = 0; i < run_length; i++) {
-                    versions.push([agents[agent_i], base + i]);
-                }
-                seqs[agent_i] = base + run_length;
-            }
-        } else if (id == 23) {
-            let count = 0;
-            let goal = byte_array.length - len;
-            while (byte_array.length > goal) {
-                let run_len = read_varint(byte_array);
-
-                let parents = [];
-                let has_more = 1;
-                while (has_more) {
-                    let x = read_varint(byte_array);
-                    let is_foreign = 0x1 & x;
-                    has_more = 0x2 & x;
-                    let num = x >> 2;
-
-                    if (x == 1) {
-                        // no parents (e.g. parent is "root")
-                    } else if (!is_foreign) {
-                        parents.push(versions[count - num]);
-                    } else {
-                        parents.push([agents[num - 1], read_varint(byte_array)]);
-                    }
-                }
-                parentss.push(parents);
-                count++;
-
-                for (let i = 0; i < run_len - 1; i++) {
-                    parentss.push([versions[count - 1]]);
-                    count++;
-                }
-            }
-        } else {
-            byte_array.splice(0, len);
-        }
-    }
-
-    function read_string(byte_array) {
-        return new TextDecoder().decode(
-            new Uint8Array(byte_array.splice(0, read_varint(byte_array)))
-        );
-    }
-
-    function read_varint(byte_array) {
-        let result = 0;
-        let shift = 0;
-        while (true) {
-            if (byte_array.length === 0)
-                errorify("byte array does not contain varint");
-
-            let byte_val = byte_array.shift();
-            result |= (byte_val & 0x7f) << shift;
-            if ((byte_val & 0x80) == 0) return result;
-            shift += 7;
-        }
-    }
-
-    return [agents, versions, parentss];
 }
 
 function encode_version(agent, seq) {

@@ -51,8 +51,8 @@ function on_bytes_received(s) {
   chrome.runtime.sendMessage({ action: "braid_in", data: s })
 }
 
-function on_bytes_going_out(params, url) {
-  let data = constructHTTPRequest(params, url)
+function on_bytes_going_out(url, params) {
+  let data = constructHTTPRequest(url, params)
   // console.log(`on_bytes_going_out[${data}]`)
   raw_messages.push(data)
   chrome.runtime.sendMessage({ action: "braid_out", data })
@@ -118,7 +118,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
       }
       if (subscribe) {
         options.subscribe = true
-        options.retry_after_first_success = true
+        options.retry = true
       }
       response = await braid_fetch_wrapper(window.location.href, options)
     } catch (e) {
@@ -663,7 +663,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
   }
 })
 
-function constructHTTPRequest(params, url) {
+function constructHTTPRequest(url, params) {
   let httpRequest = `${params.method ?? 'GET'} ${url}\r\n`;
   for (var pair of params.headers.entries()) {
     httpRequest += `${pair[0]}: ${pair[1]}\r\n`;
@@ -672,6 +672,7 @@ function constructHTTPRequest(params, url) {
   if (['POST', 'PATCH', 'PUT'].includes(params.method?.toUpperCase()) && params.body) {
     httpRequest += params.body;
   }
+  httpRequest += '\r\n\r\n';
   return httpRequest;
 }
 
@@ -803,73 +804,26 @@ function apply_patches_and_update_selection(textarea, patches) {
 }
 
 async function braid_fetch_wrapper(url, params) {
-  if (!params.retry && !params.retry_after_first_success) return braid_fetch(url, params)
-
-  var waitTime = 10
-  if (params.subscribe) {
-    var most_recent_response = null
-    var subscribe_handler = null
-    var first_time = true
-    return new Promise((done, fail) => {
-      connect()
-      async function connect() {
-        try {
-          raw_prepend = `${httpx} 104 Multiresponse
+  params.onFetch = (...args) => {
+    if (params.subscribe) raw_prepend = `${httpx} 104 Multiresponse
 
 ${httpx} 200 OK
 `
-          most_recent_response = await braid_fetch(url, { ...params, parents: params.parents?.() }, (x) => {
-            on_bytes_received(x)
-            set_subscription_online(true)
-          }, on_bytes_going_out)
-          most_recent_response.og_subscribe = most_recent_response.subscribe
-
-          function sub() {
-            most_recent_response.og_subscribe((...args) => {
-              raw_prepend = `${httpx} 200 OK\n`
-              subscribe_handler?.(...args)
-            }, on_error)
-          }
-
-          if (subscribe_handler) sub()
-          most_recent_response.subscribe = handler => {
-            subscribe_handler = handler
-            sub()
-          }
-          done(most_recent_response)
-          waitTime = 10
-        } catch (e) {
-          if (params.retry_after_first_success && first_time) return fail('Failed on first try: ' + e)
-          on_error(e)
-        }
-        first_time = false
-      }
-      function on_error(e) {
-        console.log('eee = ' + e.stack)
-        setTimeout(connect, waitTime)
-        waitTime = Math.min(waitTime * 2, 3000)
-      }
-    })
-  } else {
-    return new Promise((done, fail) => {
-      send()
-      async function send() {
-        try {
-          var res = await braid_fetch(url, params, (x) => {
-            on_bytes_received(x)
-            set_subscription_online(true)
-          }, on_bytes_going_out)
-          if (res.status === 401 || res.status === 403) return fail('access denied')
-          if (!res.ok) throw "status not ok: " + res.status
-          done(res)
-        } catch (e) {
-          if (e.name === 'AbortError') return fail('abort')
-          setTimeout(send, waitTime)
-          waitTime = Math.min(waitTime * 2, 3000)
-        }
-      }
-    })
+    on_bytes_going_out(...args)
   }
+  params.onBytes = (x) => {
+    on_bytes_received(x)
+    set_subscription_online(true)
+  }
+  let res = await braid_fetch(url, params)
+  let og_sub = res.subscribe
+  res.subscribe = (update, error) => {
+    og_sub((x) => {
+      raw_prepend = `${httpx} 200 OK\n`
+      update(x)
+    }, error)
+  }
+  return res
 }
 
 function count_code_points(str) {

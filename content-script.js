@@ -108,6 +108,41 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
 
     window.stop();
 
+    let main_div = null
+    let textarea = null
+    let set_new_body = is_html => {
+      document.documentElement.innerHTML = is_html ? `
+          <body>
+              <span id="online" style="position: absolute; top: 5px; right: 5px;">•</span>
+              <div id="main_div"></div>
+          </body>
+      ` : `
+          <body
+              style="padding: 0px; margin: 0px; width: 100vw; height: 100vh; overflow: clip; box-sizing: border-box;"
+          >
+              <pre id="diff_d" style="display:none;position: absolute; top: 0px; left: 0px; right: 0px; bottom: 0px;padding: 13px 8px; font-size: 13px;font-family: monospace;overflow:scroll;margin:0px; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word;"></pre>
+              <span id="online" style="position: absolute; top: 5px; right: 5px;">•</span>
+              <textarea
+              id="textarea"
+              style="width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box; background: transparent;"
+              readonly
+              disabled
+              ></textarea>
+          </body>
+      `
+      main_div = document.querySelector("#main_div")
+      textarea = document.querySelector("#textarea")
+    }
+    let on_fail = e => {
+      console.log(e?.stack || e)
+      document.body.style.border = '4px red solid'
+      document.body.style.margin = '0px'
+      document.body.style.background = '#fee'
+      textarea.style.background = '#fee'
+      textarea.disabled = true
+      chrome.runtime.sendMessage({ action: "get_failed", get_failed: '' + e })
+    }
+
     try {
       let options = {
         version: !subscribe ? (version ? JSON.parse(`[${version}]`) : null) : null,
@@ -125,6 +160,9 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
       console.log('braid_fetch_wrapper failed: ' + e)
       get_failed = '' + e
       chrome.runtime.sendMessage({ action: "get_failed", get_failed })
+      set_new_body()
+      on_fail(e)
+      textarea.value = get_failed
       return
     }
 
@@ -138,27 +176,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
 
     if (is_html && headers.subscribe == null) return
 
-    document.documentElement.innerHTML = is_html ? `
-        <body>
-            <span id="online" style="position: absolute; top: 5px; right: 5px;">•</span>
-            <div id="main_div"></div>
-        </body>
-    ` : `
-        <body
-            style="padding: 0px; margin: 0px; width: 100vw; height: 100vh; overflow: clip; box-sizing: border-box;"
-        >
-            <pre id="diff_d" style="display:none;position: absolute; top: 0px; left: 0px; right: 0px; bottom: 0px;padding: 13px 8px; font-size: 13px;font-family: monospace;overflow:scroll;margin:0px; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word;"></pre>
-            <span id="online" style="position: absolute; top: 5px; right: 5px;">•</span>
-            <textarea
-            id="textarea"
-            style="width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box; background: transparent;"
-            readonly
-            disabled
-            ></textarea>
-        </body>
-    `;
-    let main_div = document.querySelector("#main_div");
-    let textarea = document.querySelector("#textarea");
+    set_new_body(is_html)
 
     if (headers.subscribe == null) return textarea.textContent = await response.text()
 
@@ -308,7 +326,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
               await braid_fetch_wrapper(window.location.href, ops);
               outstandings.remove(ops)
             } catch (e) {
-              if (e === 'access denied') {
+              if (is_access_denied(e)) {
                 let x = outstanding
                 while (x) {
                   if (x != outstanding) x.ac.abort()
@@ -330,7 +348,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
 
                 textarea.value = last_text = oplog.get()
                 last_text_code_points = count_code_points(last_text)
-              }
+              } else on_fail(e)
             }
             if (!outstandings.size) textarea.style.caretColor = ''
           }          
@@ -418,7 +436,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
         last_text_code_points = count_code_points(last_text);
         textarea.selectionStart = new_sel[0];
         textarea.selectionEnd = new_sel[1];
-      })
+      }, on_fail)
     } else if (merge_type === 'simpleton' && is_html) {
       console.log(`doing simpleton-html.. content-type=${headers['content-type']}`)
 
@@ -433,7 +451,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
 
         versions.push(new_version)
         chrome.runtime.sendMessage({ action: "new_version", version: new_version })
-      })
+      }, on_fail)
     } else if (merge_type == 'simpleton') {
 
       console.log(`got simpleton..`)
@@ -469,7 +487,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
           versions.push(new_version)
           chrome.runtime.sendMessage({ action: "new_version", version: new_version })
         }
-      })
+      }, on_fail)
 
       function produce_local_update(prev_state) {
         var patches = get_patches_for_diff(prev_state, textarea.value)
@@ -515,7 +533,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
             await braid_fetch_wrapper(window.location.href, ops)
             outstanding_changes.remove(outstanding_change)
           } catch (e) {
-            if (e === 'access denied') {
+            if (is_access_denied(e)) {
               var start_size = outstanding_changes.size
               let x = outstanding_change.next
               while (x) {
@@ -530,7 +548,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
 
               textarea.value = last_seen_state = outstanding_change.restore_state
               current_version = outstanding_change.restore_version
-            }
+            } else on_fail(e)
           }
           if (!outstanding_changes.size) textarea.style.caretColor = ''
         }
@@ -538,6 +556,8 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     } else if (merge_type) {
       throw 'unsupported merge-type: ' + merge_type
     } else if (content_type == 'application/json') {
+      console.log(`got application/json..`)
+
       var doc = null
       var last_version = []
       var outstanding_changes = 0
@@ -576,7 +596,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
             await braid_fetch_wrapper(window.location.href, new_version)
             change_stack.remove_before(change)
           } catch (e) {
-            if (e === 'access denied') {
+            if (is_access_denied(e)) {
               for (let i = versions.length - 1; i >= 0; i--) {
                 if (versions[i].version.length === change.version.length && versions[i].version.every((v, i) => v === change.version[i])) {
                   versions.splice(i, 1)
@@ -597,7 +617,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
                 cur = cur.next
               }
               textarea.value = JSON.stringify(doc)
-            }
+            } else on_fail(e)
           }
           outstanding_changes--
           if (!outstanding_changes) textarea.style.caretColor = ''
@@ -658,7 +678,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
         }
         textarea.value = JSON.stringify(doc)
         set_style_good(true)
-      })
+      }, on_fail)
     }
   }
 })
@@ -964,4 +984,8 @@ function make_linklist() {
   }  
 
   return self
+}
+
+function is_access_denied(e) {
+  return e?.message?.match(/access denied/)
 }

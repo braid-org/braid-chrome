@@ -1,3 +1,5 @@
+// copy of https://github.com/braid-org/braid-http/blob/master/braid-http-client.js v1.0.4
+
 // var peer = Math.random().toString(36).substr(2)
 
 // ***************************
@@ -350,7 +352,11 @@ async function braid_fetch (url, params = {}) {
                         case 504: // Gateway Timeout
                             give_up = false;
                     }
-                    if (give_up) return fail(new Error(`giving up because of http status: ${res.status}${(res.status === 401 || res.status === 403) ? ` (access denied)` : ''}`))
+                    if (give_up) {
+                        let e = new Error(`giving up because of http status: ${res.status}${(res.status === 401 || res.status === 403) ? ` (access denied)` : ''}`)
+                        subscription_error?.(e)
+                        return fail(e)
+                    }
                     if (!res.ok) throw new Error(`status not ok: ${res.status}`)
                 }
 

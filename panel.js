@@ -131,6 +131,11 @@ function raw_update() {
     window.error_d_label.style.display = get_failed ? 'inline' : 'none'
     window.error_d.textContent = get_failed
 
+    edit_source_d.style.display = headers['content-type'].startsWith('text/html') ? 'flex' : 'none'
+    edit_source.oninput = () => {
+        backgroundConnection.postMessage({ cmd: "edit_source", edit_source: edit_source.checked });
+    }
+
     let actor_to_color = {}
     let actor_color_angles = []
 

@@ -80,8 +80,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
   } else if (request.cmd == "show_diff") {
     on_show_diff(request.from_version)
   } else if (request.cmd == "edit_source") {
-    if (request.edit_source) subscribe_with_editor()
-    else reload()
+    subscribe_with_editor()
   } else if (request.cmd == "reload") {
     reload()
   } else if (request.cmd == 'loaded') {
@@ -102,19 +101,18 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     //   - Sends `Subscribe: true` for pages with content-type of text, markdown, javascript, or json, as well as html pages that send a `Subscribed: false` header
     //   - If response has `Subscribe: true`, the page live-updates as updates occur to it
 
-    let should_we_handle_this = request.dev_message?.content_type || ({ 'text/plain': true, 'application/json': true, 'application/javascript': true, 'text/markdown': true, 'text/html': headers.subscribed === 'false' })[req_content_type]
+    let should_we_handle_this = request.dev_message?.content_type || ({ 'text/plain': true, 'application/json': true, 'application/javascript': true, 'text/markdown': true, 'text/html': headers.subscribed === 'false' || request.dev_message?.edit_source })[req_content_type]
 
     // console.log(`should_we_handle_this = ${should_we_handle_this}`)
-    if (!should_we_handle_this) return
-
-    // let's see empirically whether the server is willing to entertain a subscription
-    var response = await fetch(window.location.href, {headers: {Accept: content_type, Subscribe: true}})
-
-    if (response.headers.get('subscribe')) subscribe_with_editor()
+    if (should_we_handle_this) subscribe_with_editor()
   }
 })
 
 async function subscribe_with_editor() {
+  // let's see empirically whether the server is willing to entertain a subscription
+  let response = await fetch(window.location.href, {headers: {Accept: content_type, Subscribe: true}})
+  if (!response.headers.get('subscribe')) return
+
   window.stop();
 
   let main_div = null
@@ -152,7 +150,6 @@ async function subscribe_with_editor() {
     chrome.runtime.sendMessage({ action: "get_failed", get_failed: '' + e })
   }
 
-  let response = null
   try {
     let options = {
       version: !subscribe ? (version ? JSON.parse(`[${version}]`) : null) : null,

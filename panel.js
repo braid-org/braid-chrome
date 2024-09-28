@@ -29,7 +29,7 @@ function connect() {
     backgroundConnection.postMessage({ cmd: 'init', tab_id: chrome.devtools.inspectedWindow.tabId })
 
     function tell_page_to_load_new_content_type() {
-        backgroundConnection.postMessage({ cmd: "reload", content_type: content_type_select.value, merge_type: merge_type_select.value, subscribe: subscribe_request.checked, ...(version_request.value ? { version: version_request.value } : {}), ...(parents_request.value ? { parents: parents_request.value } : {}) });
+        backgroundConnection.postMessage({ cmd: "reload", content_type: content_type_select.value, merge_type: merge_type_select.value, subscribe: subscribe_request.checked, ...(version_request.value ? { version: version_request.value } : {}), ...(parents_request.value ? { parents: parents_request.value } : {}), edit_source: edit_source.checked });
 
         last_version = version_request.value
         last_parents = parents_request.value
@@ -65,6 +65,11 @@ function connect() {
         }
 
         resubmit_button.style.display = (last_version != version_request.value || last_parents != parents_request.value) ? 'block' : 'none'
+    }
+
+    edit_source.oninput = () => {
+        if (edit_source.checked) backgroundConnection.postMessage({ cmd: "edit_source" })
+        else tell_page_to_load_new_content_type()
     }
 }
 
@@ -132,9 +137,6 @@ function raw_update() {
     window.error_d.textContent = get_failed
 
     edit_source_d.style.display = headers['content-type'].startsWith('text/html') ? 'flex' : 'none'
-    edit_source.oninput = () => {
-        backgroundConnection.postMessage({ cmd: "edit_source", edit_source: edit_source.checked });
-    }
 
     let actor_to_color = {}
     let actor_color_angles = []

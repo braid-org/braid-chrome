@@ -30,6 +30,10 @@ chrome.runtime.onConnect.addListener((port) => {
         tab_to_dev[tab_id] = port
       }
       if (message.cmd == 'reload') tab_to_last_dev_message[tab_id] = message
+      if (message.cmd == 'edit_source') {
+        if (!tab_to_last_dev_message[tab_id]) tab_to_last_dev_message[tab_id] = {}
+        tab_to_last_dev_message[tab_id].edit_source = true
+      }
 
       chrome.tabs.sendMessage(tab_id, message)
     });

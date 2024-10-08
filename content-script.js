@@ -8,6 +8,10 @@ var parents = null
 var content_type = null
 var merge_type = null
 var subscribe = true
+var edit_source = false
+
+var online = null
+var show_editor = null
 
 var headers = {}
 var versions = []
@@ -63,8 +67,7 @@ function set_subscription_online(bool) {
   if (window.subscription_online === bool) return
   window.subscription_online = bool
   console.log(bool ? 'Connected!' : 'Disconnected.')
-  var online = document.querySelector("#online")?.style
-  if (online) online.color = bool ? 'lime' : 'orange';
+  if (online) online.style.color = bool ? 'lime' : 'orange';
 }
 
 // This replaces the page with our "live-update" view of TEXT or JSON
@@ -80,7 +83,8 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
   } else if (request.cmd == "show_diff") {
     on_show_diff(request.from_version)
   } else if (request.cmd == "edit_source") {
-    subscribe_with_editor()
+    edit_source = true
+    show_editor()
   } else if (request.cmd == "reload") {
     reload()
   } else if (request.cmd == 'loaded') {
@@ -90,86 +94,104 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     content_type = request.dev_message?.content_type || req_content_type
     merge_type = request.dev_message?.merge_type || request.headers['merge-type']
     subscribe = request.dev_message ? request.dev_message?.subscribe : true
+    edit_source = request.dev_message ? request.dev_message?.edit_source : false
 
     headers = {}
     for (let x of Object.entries(request.headers)) headers[x[0]] = x[1]
 
     chrome.runtime.sendMessage({ action: "init", headers, versions, raw_messages, get_failed })
 
-    // this next section implements this part of the readme.md
-    // - Live-updates any Braid-HTTP page, without the reload button
-    //   - Sends `Subscribe: true` for pages with content-type of text, markdown, javascript, or json, as well as html pages that send a `Subscribed: false` header
-    //   - If response has `Subscribe: true`, the page live-updates as updates occur to it
-
-    let should_we_handle_this = request.dev_message?.content_type || ({ 'text/plain': true, 'application/json': true, 'application/javascript': true, 'text/markdown': true, 'text/html': headers.subscribed === 'false' || request.dev_message?.edit_source })[req_content_type]
-
-    // console.log(`should_we_handle_this = ${should_we_handle_this}`)
-    if (should_we_handle_this) subscribe_with_editor()
+    if (version || parents) handle_specific_version()
+    else if (subscribe) handle_subscribe()
   }
 })
 
-async function subscribe_with_editor() {
-  // let's see empirically whether the server is willing to entertain a subscription
-  let response = await fetch(window.location.href, {headers: {Accept: content_type, Subscribe: true}})
-  if (!response.headers.get('subscribe')) return
-
+async function handle_specific_version() {
   window.stop();
+  document.body.innerHTML = '<textarea disabled style="position: fixed; left: 0px; top: 0px; right: 0px; bottom: 0px; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box; background: transparent;"></textarea>'
+  document.body.style.background = 'none'
+  let textarea = document.body.firstChild
 
-  let main_div = null
-  let textarea = null
-  let set_new_body = merge_type => {
-    document.documentElement.innerHTML = merge_type == 'simpleton-html' ? `
-          <body>
-              <span id="online" style="position: absolute; top: 5px; right: 5px;">•</span>
-              <div id="main_div"></div>
-          </body>
-      ` : `
-          <body
-              style="padding: 0px; margin: 0px; width: 100vw; height: 100vh; overflow: clip; box-sizing: border-box;"
-          >
-              <pre id="diff_d" style="display:none;position: absolute; top: 0px; left: 0px; right: 0px; bottom: 0px;padding: 13px 8px; font-size: 13px;font-family: monospace;overflow:scroll;margin:0px; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word;"></pre>
-              <span id="online" style="position: absolute; top: 5px; right: 5px;">•</span>
-              <textarea
-              id="textarea"
+  try {
+    response = await braid_fetch_wrapper(window.location.href, {
+      version: version ? JSON.parse(`[${version}]`) : null,
+      parents: parents ? JSON.parse(`[${parents}]`) : null,
+      peer,
+      headers: { Accept: content_type, ...(merge_type ? { ['Merge-Type']: merge_type } : {}) },
+      signal: abort_controller.signal,
+      retry: true
+    })
+
+    headers = {}
+    for (let x of response.headers.entries()) headers[x[0].toLowerCase()] = x[1]
+    chrome.runtime.sendMessage({ action: "new_headers", headers })
+
+    textarea.textContent = await response.text()
+  } catch (e) {
+    console.log('braid_fetch_wrapper failed: ' + e)
+    get_failed = '' + e
+    chrome.runtime.sendMessage({ action: "get_failed", get_failed })
+    textarea.value = get_failed
+
+    textarea.style.border = '4px red solid'
+    textarea.style.background = '#fee'
+    chrome.runtime.sendMessage({ action: "get_failed", get_failed: '' + e })
+  }
+}
+
+async function handle_subscribe() {
+  let uniquePrefix = '_' + Math.random().toString(36).slice(2)
+  let main_div = make_html(`<div
+          style="position: fixed; left: 0px; top: 0px; right: 0px; bottom: 0px; box-sizing: border-box;"
+      >
+          <pre 
+              class="${uniquePrefix}_diff_d" 
+              style="display:none; position: absolute; top: 0px; left: 0px; right: 0px; bottom: 0px; padding: 13px 8px; font-size: 13px; font-family: monospace; overflow:scroll; margin:0px; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word;"
+          ></pre>
+          <span 
+              class="${uniquePrefix}_online" 
+              style="position: absolute; top: 5px; right: 5px;"
+          >•</span>
+          <textarea
+              class="${uniquePrefix}_textarea"
               style="width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box; background: transparent;"
               readonly
               disabled
-              ></textarea>
-          </body>
-      `
-    main_div = document.querySelector("#main_div")
-    textarea = document.querySelector("#textarea")
+          ></textarea>
+      </div>`)
+  let diff_d = main_div.querySelector(`.${uniquePrefix}_diff_d`)
+  online = main_div.querySelector(`.${uniquePrefix}_online`)
+  let textarea = main_div.querySelector(`.${uniquePrefix}_textarea`)
+  show_editor = () => {
+    document.body.innerHTML = ''
+    document.body.style.background = 'none'
+    document.body.append(main_div)
   }
+
   let on_fail = e => {
     console.log(e?.stack || e)
-    document.body.style.border = '4px red solid'
-    document.body.style.margin = '0px'
-    document.body.style.background = '#fee'
+    textarea.style.border = '4px red solid'
     textarea.style.background = '#fee'
     textarea.disabled = true
     chrome.runtime.sendMessage({ action: "get_failed", get_failed: '' + e })
   }
 
   try {
-    let options = {
-      version: !subscribe ? (version ? JSON.parse(`[${version}]`) : null) : null,
-      parents: !subscribe ? (parents ? JSON.parse(`[${parents}]`) : null) : () => get_parents(),
+    response = await braid_fetch_wrapper(window.location.href, {
+      version: null,
+      parents: () => get_parents(),
       peer,
       headers: { Accept: content_type, ...(merge_type ? { ['Merge-Type']: merge_type } : {}) },
-      signal: abort_controller.signal
-    }
-    if (subscribe) {
-      options.subscribe = true
-      options.retry = true
-    }
-    response = await braid_fetch_wrapper(window.location.href, options)
+      signal: abort_controller.signal,
+      subscribe: true,
+      retry: true
+    })
   } catch (e) {
     console.log('braid_fetch_wrapper failed: ' + e)
     get_failed = '' + e
     chrome.runtime.sendMessage({ action: "get_failed", get_failed })
-    set_new_body()
-    on_fail(e)
     textarea.value = get_failed
+    on_fail(e)
     return
   }
 
@@ -177,15 +199,11 @@ async function subscribe_with_editor() {
   for (let x of response.headers.entries()) headers[x[0].toLowerCase()] = x[1]
   chrome.runtime.sendMessage({ action: "new_headers", headers })
 
+  if (headers.subscribe !== 'true') return
+
   if (headers['merge-type']) merge_type = headers['merge-type']
 
-  let is_html = headers['content-type']?.split(';')[0] === 'text/html'
-
-  if (is_html && headers.subscribe == null) return
-
-  set_new_body(merge_type)
-
-  if (headers.subscribe == null) return textarea.textContent = await response.text()
+  if (headers['content-type']?.split(/[;,]/)[0] !== 'text/html' || edit_source) show_editor()
 
   if (merge_type === 'dt') {
     let wasmModuleBuffer = await(await fetch(chrome.runtime.getURL('dt_bg.wasm'))).arrayBuffer();
@@ -444,21 +462,6 @@ async function subscribe_with_editor() {
       textarea.selectionStart = new_sel[0];
       textarea.selectionEnd = new_sel[1];
     }, on_fail)
-  } else if (merge_type === 'simpleton-html') {
-    console.log(`doing simpleton-html.. content-type=${headers['content-type']}`)
-
-    response.subscribe(update => {
-      let new_version = {
-        ...update,
-        method: "GET",
-      }
-      if (!new_version.patches) new_version.patches = [{ unit: 'xpath', range: '/', content: update.body }]
-
-      applyDomDiff(main_div, new_version.patches)
-
-      versions.push(new_version)
-      chrome.runtime.sendMessage({ action: "new_version", version: new_version })
-    }, on_fail)
   } else if (merge_type == 'simpleton') {
 
     console.log(`got simpleton..`)
@@ -481,7 +484,10 @@ async function subscribe_with_editor() {
 
       if (current_version.length === (!update.parents ? 0 : update.parents.length) && current_version.every((v, i) => v === update.parents[i])) {
         current_version = update.version
+
         if (update.body != null) textarea.value = update.body
+        else if (update.patches?.[0]?.unit === 'xpath')
+          applyDomDiff(main_div, update.patches)
         else apply_patches_and_update_selection(textarea, update.patches)
         last_seen_state = textarea.value
 
@@ -489,7 +495,7 @@ async function subscribe_with_editor() {
           ...update,
           method: "GET",
         }
-        if (!new_version.patches) new_version.patches = [{ unit: 'text', range: '[0:0]', content: update.body }]
+        if (!new_version.patches) new_version.patches = [{ unit: 'body', range: '', content: update.body }]
 
         versions.push(new_version)
         chrome.runtime.sendMessage({ action: "new_version", version: new_version })
@@ -994,4 +1000,10 @@ function make_linklist() {
 
 function is_access_denied(e) {
   return e?.message?.match(/access denied/)
+}
+
+function make_html(html) {
+  let x = document.createElement('div')
+  x.innerHTML = html
+  return x.firstChild
 }

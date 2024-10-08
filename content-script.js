@@ -93,8 +93,8 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     let req_content_type = request.headers['content-type']?.split(/[;,]/)[0]
     content_type = request.dev_message?.content_type || req_content_type
     merge_type = request.dev_message?.merge_type || request.headers['merge-type']
-    subscribe = request.dev_message ? request.dev_message?.subscribe : true
-    edit_source = request.dev_message ? request.dev_message?.edit_source : false
+    subscribe = !(request.dev_message?.subscribe === false)
+    edit_source = request.dev_message?.edit_source
 
     headers = {}
     for (let x of Object.entries(request.headers)) headers[x[0]] = x[1]

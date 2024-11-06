@@ -19,7 +19,7 @@ var raw_messages = []
 var raw_prepend = null
 var get_failed = ''
 
-var oplog = null
+var doc = null
 var default_version_count = 1
 var on_show_diff = () => { }
 var get_parents = () => null
@@ -218,7 +218,7 @@ async function handle_subscribe() {
 
     let outstandings = make_linklist();
 
-    oplog = new Doc(peer);
+    doc = new Doc(peer);
 
     on_show_diff = (from_version) => {
       var scrollPos = (window.getComputedStyle(diff_d).display === "none") ? {
@@ -240,7 +240,7 @@ async function handle_subscribe() {
       diff_d.style.display = 'block';
       textarea.style.display = 'none';
 
-      const diffArray = OpLog_diff_from(oplog, from_version);
+      const diffArray = dt_diff_from(doc, from_version);
       diff_d.innerHTML = '';
       diffArray.forEach(element => {
         let [status, text] = element;
@@ -304,11 +304,11 @@ async function handle_subscribe() {
       last_text = textarea.value;
       last_text_code_points = commonStart_codePoints + commonEnd_codePoints + count_code_points(stuffToInsert)
 
-      let v = oplog.getRemoteVersion().map(v => v.join('-'));
-      if (numCodePointsToDelete) oplog.del(commonStart_codePoints, numCodePointsToDelete);
-      if (stuffToInsert) oplog.ins(commonStart_codePoints, stuffToInsert);
+      let v = doc.getRemoteVersion().map(v => v.join('-'));
+      if (numCodePointsToDelete) doc.del(commonStart_codePoints, numCodePointsToDelete);
+      if (stuffToInsert) doc.ins(commonStart_codePoints, stuffToInsert);
 
-      for (let p of dt_get_patches(oplog, v)) {
+      for (let p of dt_get_patches(doc, v)) {
         //   console.log(JSON.stringify(p));
 
         p.version = decode_version(p.version)
@@ -366,12 +366,14 @@ async function handle_subscribe() {
                 x = x.next
               }
 
-              oplog = dt_get(oplog, oplog.getRemoteVersion().map(v => {
+              let new_doc = dt_get(doc, doc.getRemoteVersion().map(v => {
                 if (v[0] === peer) v[1] = start_version_seq - 1
                 return v.join('-')
               }))
+              doc.free()
+              doc = new_doc
 
-              textarea.value = last_text = oplog.get()
+              textarea.value = last_text = doc.get()
               last_text_code_points = count_code_points(last_text)
             } else on_fail(e)
           }
@@ -380,7 +382,7 @@ async function handle_subscribe() {
       }
     });
 
-    response.subscribe(({ version, parents, body, patches }) => {
+    response.subscribe(({ version, parents, body_text, patches }) => {
       if (textarea.hasAttribute("readonly")) {
         textarea.removeAttribute("readonly")
         textarea.removeAttribute('disabled')
@@ -392,7 +394,7 @@ async function handle_subscribe() {
           method: "GET",
           version,
           parents,
-          patches: [{ unit: 'text', range: '[0:0]', content: body }]
+          patches: [{ unit: 'text', range: '[0:0]', content: body_text }]
         }
         versions.push(new_version)
         chrome.runtime.sendMessage({ action: "new_version", version: new_version })
@@ -408,13 +410,13 @@ async function handle_subscribe() {
       versions.push(new_version)
       chrome.runtime.sendMessage({ action: "new_version", version: new_version })
 
-      let v = oplog.getLocalVersion();
+      let v = doc.getLocalVersion();
 
       try {
         patches = patches.map((p) => ({
           ...p,
           range: p.range.match(/\d+/g).map((x) => parseInt(x)),
-          ...(p.content ? { content: [...p.content] } : {}),
+          ...(p.content ? { content_codepoints: [...p.content] } : {}),
         }))
 
         let v = decode_version(version[0])
@@ -425,21 +427,21 @@ async function handle_subscribe() {
         let offset = 0
         for (let p of patches) {
           // delete
-          for (let i = p.range[0]; i < p.range[1]; i++) {
-            oplog.mergeBytes(dt_create_bytes(v, ps, p.range[1] - 1 + offset, null))
-            offset--
-            ps = [v]
+          let del = p.range[1] - p.range[0]
+          if (del) {
+            doc.mergeBytes(dt_create_bytes(v, ps, p.range[0] + offset, del, null))
+            offset -= del
             v = decode_version(v)
-            v = encode_version(v[0], v[1] + 1)
+            ps = [`${v[0]}-${v[1] + (del - 1)}`]
+            v = `${v[0]}-${v[1] + del}`
           }
           // insert
-          for (let i = 0; i < p.content?.length ?? 0; i++) {
-            let c = p.content[i]
-            oplog.mergeBytes(dt_create_bytes(v, ps, p.range[1] + offset, c))
-            offset++
-            ps = [v]
+          if (p.content?.length) {
+            doc.mergeBytes(dt_create_bytes(v, ps, p.range[1] + offset, 0, p.content))
+            offset += p.content_codepoints.length
             v = decode_version(v)
-            v = encode_version(v[0], v[1] + 1)
+            ps = [`${v[0]}-${v[1] + (p.content_codepoints.length - 1)}`]
+            v = `${v[0]}-${v[1] + p.content_codepoints.length}`
           }
         }
       } catch (e) {
@@ -454,7 +456,7 @@ async function handle_subscribe() {
       let [new_text, new_sel] = applyChanges(
         textarea.value,
         sel,
-        oplog.xfSince(v)
+        doc.xfSince(v)
       );
 
       textarea.value = last_text = new_text;
@@ -485,7 +487,7 @@ async function handle_subscribe() {
       if (current_version.length === (!update.parents ? 0 : update.parents.length) && current_version.every((v, i) => v === update.parents[i])) {
         current_version = update.version
 
-        if (update.body != null) textarea.value = update.body
+        if (update.body != null) textarea.value = update.body_text
         else if (update.patches?.[0]?.unit === 'xpath')
           applyDomDiff(main_div, update.patches)
         else apply_patches_and_update_selection(textarea, update.patches)
@@ -495,7 +497,7 @@ async function handle_subscribe() {
           ...update,
           method: "GET",
         }
-        if (!new_version.patches) new_version.patches = [{ unit: 'body', range: '', content: update.body }]
+        if (!new_version.patches) new_version.patches = [{ unit: 'body', range: '', content: update.body_text }]
 
         versions.push(new_version)
         chrome.runtime.sendMessage({ action: "new_version", version: new_version })
@@ -639,7 +641,7 @@ async function handle_subscribe() {
       }
     }
 
-    response.subscribe(({ version, parents, body, patches }) => {
+    response.subscribe(({ version, parents, body_text, patches }) => {
 
       if (textarea.hasAttribute("readonly")) {
         textarea.removeAttribute("readonly")
@@ -648,7 +650,7 @@ async function handle_subscribe() {
 
       // console.log(
       //   `v = ${JSON.stringify(
-      //     { version, parents, body, patches },
+      //     { version, parents, body_text, patches },
       //     null,
       //     4
       //   )}`
@@ -665,13 +667,13 @@ async function handle_subscribe() {
           patches
         }
 
-        if (body != null) {
-          doc = JSON.parse(body)
+        if (body_text != null) {
+          doc = JSON.parse(body_text)
 
           new_version.patches = [{
             unit: 'json',
             range: '',
-            content: body
+            content: body_text
           }]
         } else {
           for (let p of patches)

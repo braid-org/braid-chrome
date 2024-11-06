@@ -1,4 +1,4 @@
-// copy of https://github.com/braid-org/braid-http/blob/master/braid-http-client.js v1.0.4
+// copy of https://github.com/braid-org/braid-http/blob/master/braid-http-client.js v1.1.0
 
 // var peer = Math.random().toString(36).substr(2)
 
@@ -171,6 +171,9 @@ async function braid_fetch (url, params = {}) {
         params.headers.set('subscribe', 'true')
     if (params.peer)
         params.headers.set('peer', params.peer)
+    
+    if (params.heartbeats)
+        params.headers.set('heartbeats', typeof params.heartbeats === 'number' ? `${params.heartbeats}s` : params.heartbeats)
 
     // Prevent browsers from going to disk cache
     params.cache = 'no-cache'
@@ -227,8 +230,23 @@ async function braid_fetch (url, params = {}) {
     return await new Promise((done, fail) => {
         connect()
         async function connect() {
+            let on_error = e => {
+                on_error = () => {}
+
+                if (!params.retry || (e.name === "AbortError")) {
+                    subscription_error?.(e)
+                    return fail(e)
+                }
+
+                underlying_aborter.abort()
+
+                console.log(`retrying in ${waitTime}ms: ${url} after error: ${e}`)
+                setTimeout(connect, waitTime)
+                waitTime = Math.min(waitTime * 2, 3000)
+            }
+
             try {
-                if (original_signal?.aborted) return fail(new Error('abort'))
+                if (original_signal?.aborted) throw new DOMException('already aborted', 'AbortError')
 
                 // We need a fresh underlying abort controller each time we connect
                 underlying_aborter = new AbortController()
@@ -237,7 +255,7 @@ async function braid_fetch (url, params = {}) {
                 // If parents is a function,
                 // call it now to get the latest parents
                 if (typeof params.parents === 'function') {
-                    let parents = params.parents()
+                    let parents = await params.parents()
                     if (parents) params.headers.set('parents', parents.map(JSON.stringify).join(', '))
                 }
 
@@ -259,6 +277,23 @@ async function braid_fetch (url, params = {}) {
                     subscription_cb = cb
                     subscription_error = error
 
+                    // heartbeat
+                    let on_heartbeat = () => {}
+                    if (res.headers.get('heartbeats')) {
+                        let heartbeats = parseFloat(res.headers.get('heartbeats'))
+                        if (isFinite(heartbeats)) {
+                            let timeout = null
+                            on_heartbeat = () => {
+                                clearTimeout(timeout)
+                                let wait_seconds = 1.2 * heartbeats + 3
+                                timeout = setTimeout(() => {
+                                    on_error(new Error(`heartbeat not seen in ${wait_seconds.toFixed(2)}s`))
+                                }, wait_seconds * 1000)
+                            }
+                            on_heartbeat()
+                        }
+                    }
+
                     if (!res.ok)
                         throw new Error('Request returned not ok status:', res.status)
 
@@ -276,20 +311,16 @@ async function braid_fetch (url, params = {}) {
                             if (!err)
                                 // Yay!  We got a new version!  Tell the callback!
                                 cb(result)
-                            else {
+                            else
                                 // This error handling code runs if the connection
                                 // closes, or if there is unparseable stuff in the
                                 // streamed response.
-
-                                // In any case, we want to be sure to abort the
-                                // underlying fetch.
-                                underlying_aborter.abort()
-
                                 on_error(err)
-                            }
                         },
-                        !isTextContentType(res.headers.get('content-type')),
-                        params.onBytes
+                        (...args) => {
+                            on_heartbeat()
+                            params.onBytes?.(...args)
+                        }
                     )
                 }
 
@@ -368,27 +399,17 @@ async function braid_fetch (url, params = {}) {
                 waitTime = 10
             } catch (e) { on_error(e) }
         }
-        function on_error(e) {
-            if (!params.retry || (e.name === "AbortError")) {
-                subscription_error?.(e)
-                return fail(e)
-            }
-
-            console.log(`retrying in ${waitTime}ms: ${url} after error: ${e}`)
-            setTimeout(connect, waitTime)
-            waitTime = Math.min(waitTime * 2, 3000)
-        }
     })
 }
 
 // Parse a stream of versions from the incoming bytes
-async function handle_fetch_stream (stream, cb, binary, on_bytes) {
+async function handle_fetch_stream (stream, cb, on_bytes) {
     if (is_nodejs)
         stream = to_whatwg_stream(stream)
 
     // Set up a reader
     var reader = stream.getReader(),
-        parser = subscription_parser(cb, binary)
+        parser = subscription_parser(cb)
     
     while (true) {
         var versions = []
@@ -422,7 +443,7 @@ async function handle_fetch_stream (stream, cb, binary, on_bytes) {
 // Braid-HTTP Subscription Parser
 // ****************************
 
-var subscription_parser = (cb, binary) => ({
+var subscription_parser = (cb) => ({
     // A parser keeps some parse state
     state: {input: []},
 
@@ -442,9 +463,6 @@ var subscription_parser = (cb, binary) => ({
             // Try to parse an update
             try {
                 this.state = parse_update (this.state)
-
-                // Parse UTF-8 if it isn't binary
-                if (!binary && this.state.body) this.state.body = (new TextDecoder('utf-8')).decode(this.state.body)
             } catch (e) {
                 this.cb(null, e)
                 return
@@ -463,6 +481,13 @@ var subscription_parser = (cb, binary) => ({
                 }
                 for (var k in update)
                     if (update[k] === undefined) delete update[k]
+
+                Object.defineProperty(update, 'body_text', {
+                    get: function () {
+                        if (this.body != null) return new TextDecoder('utf-8').decode(this.body.buffer)
+                    }
+                })
+
                 this.cb(update)
 
                 // Reset the parser for the next version!
@@ -786,29 +811,6 @@ function extractHeader(input) {
         remaining_bytes: remainingBytes,
         header_string: headerString
     };
-}
-
-function isTextContentType(contentType) {
-    if (!contentType) return false
-
-    contentType = contentType.toLowerCase().trim()
-
-    // Check if it starts with "text/"
-    if (contentType.startsWith("text/")) return true
-
-    // Initialize the Map if it doesn't exist yet
-    if (!isTextContentType.textApplicationTypes) {
-        isTextContentType.textApplicationTypes = new Map([
-            ["application/json", true],
-            ["application/xml", true],
-            ["application/javascript", true],
-            ["application/ecmascript", true],
-            ["application/x-www-form-urlencoded", true],
-        ])
-    }
-
-    // Use the cached map of text-based application types
-    return isTextContentType.textApplicationTypes.has(contentType)
 }
 
 // ****************************

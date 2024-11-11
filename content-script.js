@@ -16,7 +16,6 @@ var show_editor = null
 var headers = {}
 var versions = []
 var raw_messages = []
-var raw_prepend = null
 var get_failed = ''
 
 var doc = null
@@ -39,12 +38,6 @@ window.errorify = (msg) => {
 
 function on_bytes_received(s) {
   s = (new TextDecoder()).decode(s)
-
-  if (raw_prepend) {
-    raw_messages.push(raw_prepend)
-    chrome.runtime.sendMessage({ action: "braid_in", data: raw_prepend })
-    raw_prepend = null
-  }
 
   s = s.replace(/(\r?\n\r?\n)(Version:)/g, (_0, _1, _2) => {
     return _1 + `${httpx} 200 OK\r\n` + _2
@@ -382,7 +375,11 @@ async function handle_subscribe() {
       }
     });
 
-    response.subscribe(({ version, parents, body_text, patches }) => {
+    response.subscribe(update => {
+      let { version, parents, patches, body } = update
+      if (body) body = update.body_text
+      if (patches) for (let p of patches) p.content = p.content_text
+
       if (textarea.hasAttribute("readonly")) {
         textarea.removeAttribute("readonly")
         textarea.removeAttribute('disabled')
@@ -394,7 +391,7 @@ async function handle_subscribe() {
           method: "GET",
           version,
           parents,
-          patches: [{ unit: 'text', range: '[0:0]', content: body_text }]
+          patches: [{ unit: 'text', range: '[0:0]', content: body }]
         }
         versions.push(new_version)
         chrome.runtime.sendMessage({ action: "new_version", version: new_version })
@@ -416,7 +413,7 @@ async function handle_subscribe() {
         patches = patches.map((p) => ({
           ...p,
           range: p.range.match(/\d+/g).map((x) => parseInt(x)),
-          ...(p.content ? { content_codepoints: [...p.content] } : {}),
+          ...(p.content ? { content: p.content_text, content_codepoints: [...p.content_text] } : {}),
         }))
 
         let v = decode_version(version[0])
@@ -478,6 +475,9 @@ async function handle_subscribe() {
     get_parents = () => current_version
 
     response.subscribe(update => {
+      if (update.body) update.body = update.body_text
+      if (update.patches) for (let p of update.patches) p.content = p.content_text
+
       if (textarea.hasAttribute("readonly")) {
         textarea.removeAttribute("readonly")
         textarea.removeAttribute('disabled')
@@ -487,7 +487,7 @@ async function handle_subscribe() {
       if (current_version.length === (!update.parents ? 0 : update.parents.length) && current_version.every((v, i) => v === update.parents[i])) {
         current_version = update.version
 
-        if (update.body != null) textarea.value = update.body_text
+        if (update.body != null) textarea.value = update.body
         else if (update.patches?.[0]?.unit === 'xpath')
           applyDomDiff(main_div, update.patches)
         else apply_patches_and_update_selection(textarea, update.patches)
@@ -497,7 +497,7 @@ async function handle_subscribe() {
           ...update,
           method: "GET",
         }
-        if (!new_version.patches) new_version.patches = [{ unit: 'body', range: '', content: update.body_text }]
+        if (!new_version.patches) new_version.patches = [{ unit: 'body', range: '', content: update.body }]
 
         versions.push(new_version)
         chrome.runtime.sendMessage({ action: "new_version", version: new_version })
@@ -641,7 +641,10 @@ async function handle_subscribe() {
       }
     }
 
-    response.subscribe(({ version, parents, body_text, patches }) => {
+    response.subscribe(update => {
+      let { version, parents, patches, body } = update
+      if (body) body = update.body_text
+      if (patches) for (let p of patches) p.content = p.content_text
 
       if (textarea.hasAttribute("readonly")) {
         textarea.removeAttribute("readonly")
@@ -650,7 +653,7 @@ async function handle_subscribe() {
 
       // console.log(
       //   `v = ${JSON.stringify(
-      //     { version, parents, body_text, patches },
+      //     { version, parents, body, patches },
       //     null,
       //     4
       //   )}`
@@ -667,13 +670,13 @@ async function handle_subscribe() {
           patches
         }
 
-        if (body_text != null) {
-          doc = JSON.parse(body_text)
+        if (body != null) {
+          doc = JSON.parse(body)
 
           new_version.patches = [{
             unit: 'json',
             range: '',
-            content: body_text
+            content: body
           }]
         } else {
           for (let p of patches)
@@ -838,26 +841,12 @@ function apply_patches_and_update_selection(textarea, patches) {
 }
 
 async function braid_fetch_wrapper(url, params) {
-  params.onFetch = (...args) => {
-    if (params.subscribe) raw_prepend = `${httpx} 104 Multiresponse
-
-${httpx} 200 OK
-`
-    on_bytes_going_out(...args)
-  }
+  params.onFetch = (...args) => on_bytes_going_out(...args)
   params.onBytes = (x) => {
     on_bytes_received(x)
     set_subscription_online(true)
   }
-  let res = await braid_fetch(url, params)
-  let og_sub = res.subscribe
-  res.subscribe = (update, error) => {
-    og_sub((x) => {
-      raw_prepend = `${httpx} 200 OK\n`
-      update(x)
-    }, error)
-  }
-  return res
+  return await braid_fetch(url, params)
 }
 
 function count_code_points(str) {

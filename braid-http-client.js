@@ -1,4 +1,4 @@
-// copy of https://github.com/braid-org/braid-http/blob/master/braid-http-client.js v1.1.0
+// copy of https://github.com/braid-org/braid-http/blob/master/braid-http-client.js v1.3.4
 
 // var peer = Math.random().toString(36).substr(2)
 
@@ -191,18 +191,31 @@ async function braid_fetch (url, params = {}) {
         if (params.patches.length === 1) {
             let patch = params.patches[0]
             params.headers.set('Content-Range', `${patch.unit} ${patch.range}`)
-            params.headers.set('Content-Length', `${(new TextEncoder().encode(patch.content)).length}`)
+
+            if (typeof patch.content === 'string')
+                patch.content = new TextEncoder().encode(patch.content)
+
             params.body = patch.content
         }
 
         // Multiple patches get sent within a Patches: N block
         else {
             params.headers.set('Patches', params.patches.length)
-            params.body = (params.patches).map(patch => {
-                var length = `content-length: ${(new TextEncoder().encode(patch.content)).length}`
+            let bufs = []
+            let te = new TextEncoder()
+            for (let patch of params.patches) {
+                if (bufs.length) bufs.push(te.encode(`\r\n`))
+
+                if (typeof patch.content === 'string')
+                    patch.content = te.encode(patch.content)
+
+                var length = `content-length: ${get_binary_length(patch.content)}`
                 var range = `content-range: ${patch.unit} ${patch.range}`
-                return `${length}\r\n${range}\r\n\r\n${patch.content}\r\n`
-            }).join('\r\n')
+                bufs.push(te.encode(`${length}\r\n${range}\r\n\r\n`))
+                bufs.push(patch.content)
+                bufs.push(te.encode(`\r\n`))
+            }
+            params.body = new Blob(bufs)
         }
     }
 
@@ -233,7 +246,7 @@ async function braid_fetch (url, params = {}) {
             let on_error = e => {
                 on_error = () => {}
 
-                if (!params.retry || (e.name === "AbortError")) {
+                if (!params.retry || e.name === "AbortError" || e.startsWith?.('Parse error in headers')) {
                     subscription_error?.(e)
                     return fail(e)
                 }
@@ -308,10 +321,13 @@ async function braid_fetch (url, params = {}) {
                         // Each time something happens, we'll either get a new
                         // version back, or an error.
                         (result, err) => {
-                            if (!err)
+                            if (!err) {
+                                // check whether we aborted
+                                if (original_signal?.aborted) throw new DOMException('already aborted', 'AbortError')
+
                                 // Yay!  We got a new version!  Tell the callback!
                                 cb(result)
-                            else
+                            } else
                                 // This error handling code runs if the connection
                                 // closes, or if there is unparseable stuff in the
                                 // streamed response.
@@ -488,7 +504,18 @@ var subscription_parser = (cb) => ({
                     }
                 })
 
-                this.cb(update)
+                for (let p of update.patches ?? []) {
+                    Object.defineProperty(p, 'content_text', {
+                        get: () => new TextDecoder('utf-8').decode(p.content)
+                    })
+                }
+
+                try {
+                    this.cb(update)
+                } catch (e) {
+                    this.cb(null, e)
+                    return
+                }
 
                 // Reset the parser for the next version!
                 this.state = {input: this.state.input}
@@ -550,15 +577,29 @@ function parse_update (state) {
 // Parsing helpers
 function parse_headers (input) {
 
-    var h = extractHeader(input)
-    if (!h) return {result: 'waiting'}
+    // Find the start of the headers
+    let s = 0;
+    while (input[s] === 13 || input[s] === 10) s++
+    if (s === input.length) return {result: 'waiting'}
 
-    var headers_source = h.header_string
+    // Look for the double-newline at the end of the headers.
+    let e = s;
+    while (++e) {
+        if (e > input.length) return {result: 'waiting'}
+        if (input[e - 1] === 10 && (input[e - 2] === 10 || (input[e - 2] === 13 && input[e - 3] === 10))) break
+    }
+
+    // Extract the header string
+    var headers_source = new TextDecoder('utf-8').decode(new Uint8Array(input.slice(s, e)))
+
+    // Skip "HTTP 200 OK"
+    headers_source = headers_source.replace(/^HTTP 200.*\r?\n/, '')
+
     var headers_length = headers_source.length
     
     // Let's parse them!  First define some variables:
     var headers = {},
-        header_regex = /(:?[\w-_]+):\s?(.*)\r?\n?/gy,  // Parses one line a time
+        header_regex = /(:?[\w-_]+):\s?(.*)[\r\n]*/gy,  // Parses one line a time
         match,
         found_last_match = false
 
@@ -591,7 +632,7 @@ function parse_headers (input) {
         headers.patches = JSON.parse(headers.patches)
 
     // Update the input
-    input = h.remaining_bytes
+    input = input.slice(e)
 
     // And return the parsed result
     return { result: 'success', headers, input }
@@ -631,7 +672,7 @@ function parse_body (state) {
             state.patches = [{
                 unit: match.unit,
                 range: match.range,
-                content: (new TextDecoder('utf-8')).decode(new Uint8Array(state.input.slice(0, content_length))),
+                content: new Uint8Array(state.input.slice(0, content_length)),
 
                 // Question: Perhaps we should include headers here, like we do for
                 // the Patches: N headers below?
@@ -717,7 +758,7 @@ function parse_body (state) {
 
                 last_patch.unit = match.unit
                 last_patch.range = match.range
-                last_patch.content = (new TextDecoder('utf-8')).decode(new Uint8Array(state.input.slice(0, content_length)))
+                last_patch.content = new Uint8Array(state.input.slice(0, content_length))
                 last_patch.extra_headers = extra_headers(last_patch.headers)
                 delete last_patch.headers  // We only keep the extra headers ^^
 
@@ -759,58 +800,10 @@ function extra_headers (headers) {
     return result
 }
 
-// a parsing utility function that will inspect a byte array of incoming data
-// to see if there is header information at the beginning,
-// namely some non-newline characters followed by two newlines
-function extractHeader(input) {
-    // Find the start of the headers
-    let begin_headers_i = 0;
-    while (input[begin_headers_i] === 13 || input[begin_headers_i] === 10) {
-        begin_headers_i++;
-    }
-    if (begin_headers_i === input.length) {
-        return null; // Incomplete headers
-    }
-
-    // Look for the double-newline at the end of the headers
-    let end_headers_i = begin_headers_i;
-    let size_of_tail = 0;
-    while (end_headers_i < input.length) {
-        if (input[end_headers_i] === 10 && input[end_headers_i + 1] === 10) {
-            size_of_tail = 2;
-            break;
-        }
-        if (input[end_headers_i] === 10 && input[end_headers_i + 1] === 13 && input[end_headers_i + 2] === 10) {
-            size_of_tail = 3;
-            break;
-        }
-        if (input[end_headers_i] === 13 && input[end_headers_i + 1] === 10 && input[end_headers_i + 2] === 10) {
-            size_of_tail = 3;
-            break;
-        }
-        if (input[end_headers_i] === 13 && input[end_headers_i + 1] === 10 && input[end_headers_i + 2] === 13 && input[end_headers_i + 3] === 10) {
-            size_of_tail = 4;
-            break;
-        }
-
-        end_headers_i++;
-    }
-
-    // If no double-newline is found, wait for more input
-    if (end_headers_i === input.length) {
-        return null; // Incomplete headers
-    }
-
-    // Extract the header string
-    const headerBytes = input.slice(begin_headers_i, end_headers_i);
-    const headerString = new TextDecoder('utf-8').decode(new Uint8Array(headerBytes));
-
-    // Return the remaining bytes and the header string
-    const remainingBytes = input.slice(end_headers_i + size_of_tail);
-    return {
-        remaining_bytes: remainingBytes,
-        header_string: headerString
-    };
+function get_binary_length(x) {
+    return  x instanceof ArrayBuffer ? x.byteLength :
+            x instanceof Uint8Array ? x.length :
+            x instanceof Blob ? x.size : undefined
 }
 
 // ****************************

@@ -1,4 +1,4 @@
-// copy of https://github.com/braid-org/braid-http/blob/master/braid-http-client.js v1.3.4
+// copy of https://github.com/braid-org/braid-http/blob/master/braid-http-client.js v1.3.7
 
 // var peer = Math.random().toString(36).substr(2)
 
@@ -143,7 +143,7 @@ if (is_nodejs) {
 }
 
 async function braid_fetch (url, params = {}) {
-    params = {...params}  // Copy params, because we'll mutate it
+    params = deep_copy(params) // Copy params, because we'll mutate it
 
     // Initialize the headers object
     if (!params.headers)
@@ -804,6 +804,13 @@ function get_binary_length(x) {
     return  x instanceof ArrayBuffer ? x.byteLength :
             x instanceof Uint8Array ? x.length :
             x instanceof Blob ? x.size : undefined
+}
+
+function deep_copy(x) {
+    if (x === null || typeof x !== 'object') return x
+    if (Array.isArray(x)) return x.map(x => deep_copy(x))
+    if (Object.prototype.toString.call(x) === '[object Object]') return Object.fromEntries(Object.entries(x).map(([k, x]) => [k, deep_copy(x)]))
+    return x
 }
 
 // ****************************

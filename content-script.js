@@ -413,7 +413,7 @@ async function handle_subscribe() {
         patches = patches.map((p) => ({
           ...p,
           range: p.range.match(/\d+/g).map((x) => parseInt(x)),
-          ...(p.content ? { content: p.content_text, content_codepoints: [...p.content_text] } : {}),
+          ...(p.content ? { content: p.content, content_codepoints: [...p.content] } : {}),
         }))
 
         let v = decode_version(version[0])

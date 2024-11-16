@@ -28,15 +28,15 @@
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
-      "16": "16.png",
-      "48": "48.png",
-      "128": "128.png"
+      "16": "braid-b.png",
+      "48": "braid-b.png",
+      "128": "braid-b.png"
     }
   },
   "icons": {
-    "16": "16.png",
-    "48": "48.png",
-    "128": "128.png"
+    "16": "braid-b.png",
+    "48": "braid-b.png",
+    "128": "braid-b.png"
   },
   "web_accessible_resources": [
     {

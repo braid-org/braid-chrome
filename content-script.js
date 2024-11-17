@@ -38,21 +38,19 @@ window.errorify = (msg) => {
 
 function on_bytes_received(s) {
   s = (new TextDecoder()).decode(s)
-
-  s = s.replace(/(\r?\n\r?\n)(Version:)/g, (_0, _1, _2) => {
-    return _1 + `${httpx} 200 OK\r\n` + _2
-  })
-
   // console.log(`on_bytes_received[${s.slice(0, 500)}]`)
   raw_messages.push(s)
   chrome.runtime.sendMessage({ action: "braid_in", data: s })
 }
 
 function on_bytes_going_out(url, params) {
-  let data = constructHTTPRequest(url, params)
-  // console.log(`on_bytes_going_out[${data}]`)
-  raw_messages.push(data)
-  chrome.runtime.sendMessage({ action: "braid_out", data })
+  if (!on_bytes_going_out.chain) on_bytes_going_out.chain = Promise.resolve()
+  on_bytes_going_out.chain = on_bytes_going_out.chain.then(async () => {
+    let data = await constructHTTPRequest(url, params)
+    // console.log(`on_bytes_going_out[${data}]`)
+    raw_messages.push(data)
+    chrome.runtime.sendMessage({ action: "braid_out", data })
+  })
 }
 
 window.subscription_online = false
@@ -199,7 +197,7 @@ async function handle_subscribe() {
   if (headers['content-type']?.split(/[;,]/)[0] !== 'text/html' || edit_source) show_editor()
 
   if (merge_type === 'dt') {
-    let wasmModuleBuffer = await(await fetch(chrome.runtime.getURL('dt_bg.wasm'))).arrayBuffer();
+    let wasmModuleBuffer = await (await fetch(chrome.runtime.getURL('dt_bg.wasm'))).arrayBuffer();
     const imports = __wbg_get_imports();
     __wbg_init_memory(imports);
     const module = await WebAssembly.compile(wasmModuleBuffer);
@@ -700,17 +698,17 @@ async function handle_subscribe() {
   }
 }
 
-function constructHTTPRequest(url, params) {
-  let httpRequest = `${params.method ?? 'GET'} ${url}\r\n`;
+async function constructHTTPRequest(url, params) {
+  let httpRequest = `${params.method ?? 'GET'} ${url}\r\n`
   for (var pair of params.headers.entries()) {
-    httpRequest += `${pair[0]}: ${pair[1]}\r\n`;
+    httpRequest += `${pair[0]}: ${pair[1]}\r\n`
   }
   httpRequest += '\r\n';
   if (['POST', 'PATCH', 'PUT'].includes(params.method?.toUpperCase()) && params.body) {
-    httpRequest += params.body;
+    httpRequest += typeof params.body === 'string' ? params.body : new TextDecoder().decode(params.body instanceof Uint8Array ? params.body : new Uint8Array(params.body instanceof Blob ? new Uint8Array(await params.body.arrayBuffer()) : ArrayBuffer.isView(params.body) ? params.body.buffer : new Uint8Array(binary)))
   }
-  httpRequest += '\r\n\r\n';
-  return httpRequest;
+  httpRequest += '\r\n\r\n'
+  return httpRequest
 }
 
 function applyChanges(original, sel, changes) {
@@ -984,7 +982,7 @@ function make_linklist() {
       self.next = x
       self.size -= itemsRemoved
     } else throw 'not found'
-  }  
+  }
 
   return self
 }

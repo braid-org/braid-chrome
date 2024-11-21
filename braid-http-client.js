@@ -1,4 +1,4 @@
-// copy of https://github.com/braid-org/braid-http/blob/master/braid-http-client.js v1.3.7
+// copy of https://github.com/braid-org/braid-http/blob/master/braid-http-client.js v1.3.12
 
 // var peer = Math.random().toString(36).substr(2)
 
@@ -164,9 +164,9 @@ async function braid_fetch (url, params = {}) {
 
     // We provide some shortcuts for Braid params
     if (params.version)
-        params.headers.set('version', params.version.map(JSON.stringify).join(', '))
+        params.headers.set('version', params.version.map(JSON.stringify).map(ascii_ify).join(', '))
     if (Array.isArray(params.parents))
-        params.headers.set('parents', params.parents.map(JSON.stringify).join(', '))
+        params.headers.set('parents', params.parents.map(JSON.stringify).map(ascii_ify).join(', '))
     if (params.subscribe)
         params.headers.set('subscribe', 'true')
     if (params.peer)
@@ -397,7 +397,7 @@ async function braid_fetch (url, params = {}) {
 
                         case 502: // Bad Gateway
                         case 504: // Gateway Timeout
-                            give_up = false;
+                            give_up = false
                     }
                     if (give_up) {
                         let e = new Error(`giving up because of http status: ${res.status}${(res.status === 401 || res.status === 403) ? ` (access denied)` : ''}`)
@@ -491,6 +491,7 @@ var subscription_parser = (cb) => ({
                     parents: this.state.parents,
                     body:    this.state.body,
                     patches: this.state.patches,
+                    status:  this.state.status,
 
                     // Output extra_headers if there are some
                     extra_headers: extra_headers(this.state.headers)
@@ -565,6 +566,7 @@ function parse_update (state) {
         state.headers = parsed.headers
         state.version = state.headers.version
         state.parents = state.headers.parents
+        state.status  = state.headers[':status']
 
         // Take the parsed headers out of the buffer
         state.input = parsed.input
@@ -578,22 +580,25 @@ function parse_update (state) {
 function parse_headers (input) {
 
     // Find the start of the headers
-    let s = 0;
-    while (input[s] === 13 || input[s] === 10) s++
-    if (s === input.length) return {result: 'waiting'}
+    var start = 0
+    while (input[start] === 13 || input[start] === 10) start++
+    if (start === input.length) return {result: 'waiting'}
 
     // Look for the double-newline at the end of the headers.
-    let e = s;
-    while (++e) {
-        if (e > input.length) return {result: 'waiting'}
-        if (input[e - 1] === 10 && (input[e - 2] === 10 || (input[e - 2] === 13 && input[e - 3] === 10))) break
+    var end = start
+    while (++end) {
+        if (end > input.length) return {result: 'waiting'}
+        if (    input[end - 1] === 10
+            && (input[end - 2] === 10 || (input[end - 2] === 13 && input[end - 3] === 10)))
+            break
     }
 
     // Extract the header string
-    var headers_source = new TextDecoder('utf-8').decode(new Uint8Array(input.slice(s, e)))
+    var headers_source = input.slice(start, end).map(x => String.fromCharCode(x)).join('')
 
-    // Skip "HTTP 200 OK"
-    headers_source = headers_source.replace(/^HTTP 200.*\r?\n/, '')
+    // Convert "HTTP 200 OK" to a :status: 200 header
+    headers_source = headers_source.replace(/^HTTP\/?\d*\.?\d* (\d\d\d).*\r?\n/,
+                                            ':status: $1\r\n')
 
     var headers_length = headers_source.length
     
@@ -632,7 +637,7 @@ function parse_headers (input) {
         headers.patches = JSON.parse(headers.patches)
 
     // Update the input
-    input = input.slice(e)
+    input = input.slice(end)
 
     // And return the parsed result
     return { result: 'success', headers, input }
@@ -726,18 +731,21 @@ function parse_body (state) {
 
             // Parse Range Patch format
             {
+                var to_text = (bytes) =>
+                    new TextDecoder('utf-8').decode(new Uint8Array(bytes))
+
                 if (!('content-length' in last_patch.headers))
                     return {
                         result: 'error',
                         message: 'no content-length in patch',
-                        patch: last_patch, input: (new TextDecoder('utf-8')).decode(new Uint8Array(state.input))
+                        patch: last_patch, input: to_text(state.input)
                     }
 
                 if (!('content-range' in last_patch.headers))
                     return {
                         result: 'error',
                         message: 'no content-range in patch',
-                        patch: last_patch, input: (new TextDecoder('utf-8')).decode(new Uint8Array(state.input))
+                        patch: last_patch, input: to_text(state.input)
                     }
 
                 var content_length = parseInt(last_patch.headers['content-length'])
@@ -753,7 +761,7 @@ function parse_body (state) {
                     return {
                         result: 'error',
                         message: 'cannot parse content-range in patch',
-                        patch: last_patch, input: (new TextDecoder('utf-8')).decode(new Uint8Array(state.input))
+                        patch: last_patch, input: to_text(state.input)
                     }
 
                 last_patch.unit = match.unit
@@ -789,7 +797,7 @@ function extra_headers (headers) {
 
     // Remove the non-extra parts
     var known_headers = ['version', 'parents', 'patches',
-                         'content-length', 'content-range']
+                         'content-length', 'content-range', ':status']
     for (var i = 0; i < known_headers.length; i++)
         delete result[known_headers[i]]
 
@@ -809,8 +817,13 @@ function get_binary_length(x) {
 function deep_copy(x) {
     if (x === null || typeof x !== 'object') return x
     if (Array.isArray(x)) return x.map(x => deep_copy(x))
-    if (Object.prototype.toString.call(x) === '[object Object]') return Object.fromEntries(Object.entries(x).map(([k, x]) => [k, deep_copy(x)]))
+    if (Object.prototype.toString.call(x) === '[object Object]')
+        return Object.fromEntries(Object.entries(x).map(([k, x]) => [k, deep_copy(x)]))
     return x
+}
+
+function ascii_ify(s) {
+    return s.replace(/[^\x20-\x7E]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'))
 }
 
 // ****************************

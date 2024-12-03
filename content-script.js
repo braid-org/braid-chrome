@@ -98,7 +98,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
 })
 
 async function handle_specific_version() {
-  window.stop();
+  window.stop()
   document.body.innerHTML = '<textarea disabled style="position: fixed; left: 0px; top: 0px; right: 0px; bottom: 0px; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box; background: transparent;"></textarea>'
   document.body.style.background = 'none'
   let textarea = document.body.firstChild
@@ -131,6 +131,7 @@ async function handle_specific_version() {
 }
 
 async function handle_subscribe() {
+  window.stop()
   let uniquePrefix = '_' + Math.random().toString(36).slice(2)
   let main_div = make_html(`<div
           style="position: fixed; left: 0px; top: 0px; right: 0px; bottom: 0px; box-sizing: border-box;"
@@ -374,7 +375,9 @@ async function handle_subscribe() {
     });
 
     response.subscribe(update => {
-      let { version, parents, patches, body } = update
+      let { version, parents, patches, body, status } = update
+      if (status && parseInt(status) !== 200)
+        return console.log(`ignoring update with status ${status}`)
       if (body) body = update.body_text
       if (patches) for (let p of patches) p.content = p.content_text
 
@@ -473,6 +476,7 @@ async function handle_subscribe() {
     get_parents = () => current_version
 
     response.subscribe(update => {
+      if (update.status && parseInt(update.status) !== 200) return console.log(`ignoring update with status ${update.status}`)
       if (update.body) update.body = update.body_text
       if (update.patches) for (let p of update.patches) p.content = p.content_text
 
@@ -640,7 +644,8 @@ async function handle_subscribe() {
     }
 
     response.subscribe(update => {
-      let { version, parents, patches, body } = update
+      let { version, parents, patches, body, status } = update
+      if (status && parseInt(status) !== 200) return console.log(`ignoring update with status ${status}`)
       if (body) body = update.body_text
       if (patches) for (let p of patches) p.content = p.content_text
 

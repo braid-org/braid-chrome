@@ -1,4 +1,4 @@
-// copy of https://github.com/braid-org/braid-http/blob/master/braid-http-client.js v1.3.12
+// copy of https://github.com/braid-org/braid-http/blob/master/braid-http-client.js v1.3.15
 
 // var peer = Math.random().toString(36).substr(2)
 
@@ -118,22 +118,11 @@ function braidify_http (http) {
 // ***************************
 
 var normal_fetch,
-    AbortController,
-    Headers,
     is_nodejs = typeof window === 'undefined'
 
 if (is_nodejs) {
     // Nodejs
-
-    // Note that reconnect logic doesn't work in node-fetch, because it
-    // doesn't call the .catch() handler when the stream fails.
-    //
-    // See https://github.com/node-fetch/node-fetch/issues/753
-
-    normal_fetch = require('node-fetch')
-    AbortController = require('abort-controller')
-    Headers = normal_fetch.Headers
-    var to_whatwg_stream = require('web-streams-node').toWebReadableStream
+    normal_fetch = fetch
 } else {
     // Web Browser
     normal_fetch = window.fetch
@@ -235,10 +224,11 @@ async function braid_fetch (url, params = {}) {
             () => underlying_aborter.abort()
         )
 
-    var waitTime = 10
+    var waitTime = 1
     var res = null
     var subscription_cb = null
     var subscription_error = null
+    var cb_running = false
 
     return await new Promise((done, fail) => {
         connect()
@@ -246,16 +236,20 @@ async function braid_fetch (url, params = {}) {
             let on_error = e => {
                 on_error = () => {}
 
-                if (!params.retry || e.name === "AbortError" || e.startsWith?.('Parse error in headers')) {
+                if (!params.retry || 
+                    e.name === "AbortError" || 
+                    e.startsWith?.('Parse error in headers') ||
+                    cb_running) {
+
                     subscription_error?.(e)
                     return fail(e)
                 }
 
                 underlying_aborter.abort()
 
-                console.log(`retrying in ${waitTime}ms: ${url} after error: ${e}`)
-                setTimeout(connect, waitTime)
-                waitTime = Math.min(waitTime * 2, 3000)
+                console.log(`retrying in ${waitTime}s: ${url} after error: ${e}`)
+                setTimeout(connect, waitTime * 1000)
+                waitTime = Math.min(waitTime + 1, 3)
             }
 
             try {
@@ -326,7 +320,9 @@ async function braid_fetch (url, params = {}) {
                                 if (original_signal?.aborted) throw new DOMException('already aborted', 'AbortError')
 
                                 // Yay!  We got a new version!  Tell the callback!
+                                cb_running = true
                                 cb(result)
+                                cb_running = false
                             } else
                                 // This error handling code runs if the connection
                                 // closes, or if there is unparseable stuff in the
@@ -412,7 +408,7 @@ async function braid_fetch (url, params = {}) {
                 done(res)
 
                 params?.retry?.onRes?.(res)
-                waitTime = 10
+                waitTime = 1
             } catch (e) { on_error(e) }
         }
     })
@@ -420,9 +416,6 @@ async function braid_fetch (url, params = {}) {
 
 // Parse a stream of versions from the incoming bytes
 async function handle_fetch_stream (stream, cb, on_bytes) {
-    if (is_nodejs)
-        stream = to_whatwg_stream(stream)
-
     // Set up a reader
     var reader = stream.getReader(),
         parser = subscription_parser(cb)

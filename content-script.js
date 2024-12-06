@@ -297,17 +297,16 @@ async function handle_subscribe() {
       last_text_code_points = commonStart_codePoints + commonEnd_codePoints + count_code_points(stuffToInsert)
 
       let v = doc.getRemoteVersion().map(v => v.join('-'));
-      if (numCodePointsToDelete) doc.del(commonStart_codePoints, numCodePointsToDelete);
+      if (numCodePointsToDelete)
+        for (let i = 0; i < numCodePointsToDelete; i++)
+          doc.del(commonStart_codePoints + numCodePointsToDelete - 1 - i, 1)
       if (stuffToInsert) doc.ins(commonStart_codePoints, stuffToInsert);
 
       for (let p of dt_get_patches(doc, v)) {
         //   console.log(JSON.stringify(p));
 
-        p.version = decode_version(p.version)
-        let start_version_seq = p.version[1]
+        let start_version_seq = decode_version(p.version)[1] - (p.end - p.start - 1)
         if (p.end - p.start < 1) throw 'unexpected patch with nothing'
-        p.version[1] += p.end - p.start - 1
-        p.version = p.version.join('-')
         p.version = [p.version]
 
         let ops = {

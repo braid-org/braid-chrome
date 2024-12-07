@@ -1187,7 +1187,7 @@ async function __wbg_init(input) {
 //////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////
 
-// copy of section of https://github.com/braid-org/braid-text/blob/master/index.js v0.1.4
+// copy of section of https://github.com/braid-org/braid-text/blob/master/index.js v0.2.5
 
 // note: returns a doc that needs to be freed
 function dt_get(doc, version, agent = null) {
@@ -1231,17 +1231,28 @@ function dt_get(doc, version, agent = null) {
             ) {
                 for (; i < I; i++) {
                     let version = versions[i].join("-")
-                    if (!after_versions[version]) new_doc.mergeBytes(
+                    if (after_versions[version]) continue
+                    let og_i = i
+                    let content = []
+                    if (op_run.content?.[i - base_i]) content.push(op_run.content[i - base_i])
+                    if (!!op_run.content === op_run.fwd)
+                        while (i + 1 < I && !after_versions[versions[i + 1].join("-")]) {
+                            i++
+                            if (op_run.content?.[i - base_i]) content.push(op_run.content[i - base_i])
+                        }
+                    content = content.length ? content.join("") : null
+
+                    new_doc.mergeBytes(
                         dt_create_bytes(
                             version,
-                            parentss[i].map((x) => x.join("-")),
+                            parentss[og_i].map((x) => x.join("-")),
                             op_run.fwd ?
                                 (op_run.content ?
-                                    op_run.start + (i - base_i) :
+                                    op_run.start + (og_i - base_i) :
                                     op_run.start) :
                                 op_run.end - 1 - (i - base_i),
-                            op_run.content?.[i - base_i] != null ? 0 : 1,
-                            op_run.content?.[i - base_i]
+                            op_run.content ? 0 : i - og_i + 1,
+                            content
                         )
                     )
                 }
@@ -1439,7 +1450,7 @@ function dt_create_bytes(version, parents, pos, del, ins) {
     function write_string(byte_array, str) {
         let str_bytes = new TextEncoder().encode(str)
         write_varint(byte_array, str_bytes.length)
-        byte_array.push(...str_bytes)
+        for (let x of str_bytes) byte_array.push(x)
     }
 
     version = decode_version(version)
@@ -1467,11 +1478,11 @@ function dt_create_bytes(version, parents, pos, del, ins) {
 
     file_info.push(3)
     write_varint(file_info, agent_names.length)
-    file_info.push(...agent_names)
+    for (let x of agent_names) file_info.push(x)
 
     bytes.push(1)
     write_varint(bytes, file_info.length)
-    bytes.push(...file_info)
+    for (let x of file_info) bytes.push(x)
 
     let branch = []
 
@@ -1488,12 +1499,12 @@ function dt_create_bytes(version, parents, pos, del, ins) {
 
         branch.push(12)
         write_varint(branch, frontier.length)
-        branch.push(...frontier)
+        for (let x of frontier) branch.push(x)
     }
 
     bytes.push(10)
     write_varint(bytes, branch.length)
-    bytes.push(...branch)
+    for (let x of branch) bytes.push(x)
 
     let patches = []
 
@@ -1519,7 +1530,7 @@ function dt_create_bytes(version, parents, pos, del, ins) {
         let known_chunk = []
         write_varint(known_chunk, unicode_chars.length * 2 + 1)
         write_varint(inserted_content_bytes, known_chunk.length)
-        inserted_content_bytes.push(...known_chunk)
+        for (let x of known_chunk) inserted_content_bytes.push(x)
 
         patches.push(24)
         write_varint(patches, inserted_content_bytes.length)
@@ -1583,7 +1594,7 @@ function dt_create_bytes(version, parents, pos, del, ins) {
 
     patches.push(23)
     write_varint(patches, parents_bytes.length)
-    patches.push(...parents_bytes)
+    for (let x of parents_bytes) patches.push(x)
 
     // write in patches
     bytes.push(20)
@@ -1607,11 +1618,7 @@ function dt_diff_from(doc, version) {
     for (let xf of dt_get.last_doc.xfSince(dt_get.last_local_version)) {
         console.log(`xf = ${JSON.stringify(xf, null, 4)}`);
         if (xf.kind == "Ins") {
-            a.splice(
-                xf.start,
-                0,
-                ...[...xf.content].map((c) => ['+', c, ''])
-            );
+            a = [].concat(a.slice(0, xf.start), [...xf.content].map((c) => ['+', c, '']), a.slice(xf.start))
         } else if (xf.kind == "Del") {
             let removed = a.splice(xf.start, xf.end - xf.start);
             removed = removed

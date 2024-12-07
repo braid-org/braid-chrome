@@ -417,7 +417,7 @@ async function handle_subscribe() {
         }))
 
         let v = decode_version(version[0])
-        v = encode_version(v[0], v[1] + 1 - patches.reduce((a, b) => a + b.content.length + (b.range[1] - b.range[0]), 0))
+        v = encode_version(v[0], v[1] + 1 - patches.reduce((a, b) => a + b.content_codepoints.length + (b.range[1] - b.range[0]), 0))
 
         let ps = parents
 

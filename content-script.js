@@ -131,7 +131,6 @@ async function handle_specific_version() {
 }
 
 async function handle_subscribe() {
-  window.stop()
   let uniquePrefix = '_' + Math.random().toString(36).slice(2)
   let main_div = make_html(`<div
           style="position: fixed; left: 0px; top: 0px; right: 0px; bottom: 0px; box-sizing: border-box;"

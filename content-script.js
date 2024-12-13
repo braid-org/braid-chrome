@@ -10,6 +10,7 @@ var merge_type = null
 var subscribe = true
 var edit_source = false
 
+var textarea = null
 var online = null
 var show_editor = null
 
@@ -27,7 +28,6 @@ var abort_controller = new AbortController();
 
 window.errorify = (msg) => {
   console.log(`errorify: ${msg?.stack ?? msg}`)
-  let textarea = document.getElementById('textarea')
   if (textarea) {
     textarea.style.background = 'pink'
     textarea.style.color = '#800'
@@ -36,11 +36,17 @@ window.errorify = (msg) => {
   throw new Error(msg)
 }
 
+function send_dev_message(m) {
+  try {
+    chrome.runtime.sendMessage(m)
+  } catch (e) { window.errorify(e) }
+}
+
 function on_bytes_received(s) {
   s = (new TextDecoder()).decode(s)
   // console.log(`on_bytes_received[${s.slice(0, 500)}]`)
   raw_messages.push(s)
-  chrome.runtime.sendMessage({ action: "braid_in", data: s })
+  send_dev_message({ action: "braid_in", data: s })
 }
 
 function on_bytes_going_out(url, params) {
@@ -49,7 +55,7 @@ function on_bytes_going_out(url, params) {
     let data = await constructHTTPRequest(url, params)
     // console.log(`on_bytes_going_out[${data}]`)
     raw_messages.push(data)
-    chrome.runtime.sendMessage({ action: "braid_out", data })
+    send_dev_message({ action: "braid_out", data })
   })
 }
 
@@ -70,7 +76,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     location.reload()
   }
   if (request.cmd == 'init') {
-    chrome.runtime.sendMessage({ action: "init", headers, versions, raw_messages, get_failed })
+    send_dev_message({ action: "init", headers, versions, raw_messages, get_failed })
   } else if (request.cmd == "show_diff") {
     on_show_diff(request.from_version)
   } else if (request.cmd == "edit_source") {
@@ -90,7 +96,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     headers = {}
     for (let x of Object.entries(request.headers)) headers[x[0]] = x[1]
 
-    chrome.runtime.sendMessage({ action: "init", headers, versions, raw_messages, get_failed })
+    send_dev_message({ action: "init", headers, versions, raw_messages, get_failed })
 
     if (version || parents) handle_specific_version()
     else if (subscribe) handle_subscribe()
@@ -101,7 +107,7 @@ async function handle_specific_version() {
   window.stop()
   document.body.innerHTML = '<textarea disabled style="position: fixed; left: 0px; top: 0px; right: 0px; bottom: 0px; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box; background: transparent;"></textarea>'
   document.body.style.background = 'none'
-  let textarea = document.body.firstChild
+  textarea = document.body.firstChild
 
   try {
     response = await braid_fetch_wrapper(window.location.href, {
@@ -115,18 +121,18 @@ async function handle_specific_version() {
 
     headers = {}
     for (let x of response.headers.entries()) headers[x[0].toLowerCase()] = x[1]
-    chrome.runtime.sendMessage({ action: "new_headers", headers })
+    send_dev_message({ action: "new_headers", headers })
 
     textarea.textContent = await response.text()
   } catch (e) {
     console.log('braid_fetch_wrapper failed: ' + e)
     get_failed = '' + e
-    chrome.runtime.sendMessage({ action: "get_failed", get_failed })
+    send_dev_message({ action: "get_failed", get_failed })
     textarea.value = get_failed
 
     textarea.style.border = '4px red solid'
     textarea.style.background = '#fee'
-    chrome.runtime.sendMessage({ action: "get_failed", get_failed: '' + e })
+    send_dev_message({ action: "get_failed", get_failed: '' + e })
   }
 }
 
@@ -152,7 +158,7 @@ async function handle_subscribe() {
       </div>`)
   let diff_d = main_div.querySelector(`.${uniquePrefix}_diff_d`)
   online = main_div.querySelector(`.${uniquePrefix}_online`)
-  let textarea = main_div.querySelector(`.${uniquePrefix}_textarea`)
+  textarea = main_div.querySelector(`.${uniquePrefix}_textarea`)
   show_editor = () => {
     document.body.innerHTML = ''
     document.body.style.background = 'none'
@@ -164,7 +170,7 @@ async function handle_subscribe() {
     textarea.style.border = '4px red solid'
     textarea.style.background = '#fee'
     textarea.disabled = true
-    chrome.runtime.sendMessage({ action: "get_failed", get_failed: '' + e })
+    send_dev_message({ action: "get_failed", get_failed: '' + e })
   }
 
   try {
@@ -180,7 +186,7 @@ async function handle_subscribe() {
   } catch (e) {
     console.log('braid_fetch_wrapper failed: ' + e)
     get_failed = '' + e
-    chrome.runtime.sendMessage({ action: "get_failed", get_failed })
+    send_dev_message({ action: "get_failed", get_failed })
     textarea.value = get_failed
     on_fail(e)
     return
@@ -188,7 +194,7 @@ async function handle_subscribe() {
 
   headers = {}
   for (let x of response.headers.entries()) headers[x[0].toLowerCase()] = x[1]
-  chrome.runtime.sendMessage({ action: "new_headers", headers })
+  send_dev_message({ action: "new_headers", headers })
 
   if (headers.subscribe !== 'true') return
 
@@ -328,7 +334,7 @@ async function handle_subscribe() {
           peer
         };
         versions.push(ops)
-        chrome.runtime.sendMessage({ action: "new_version", version: ops })
+        send_dev_message({ action: "new_version", version: ops })
 
         let outstanding = {
           version: p.version,
@@ -354,7 +360,7 @@ async function handle_subscribe() {
                     break
                   }
                 }
-                chrome.runtime.sendMessage({ action: "new_version", remove_version: x.version })
+                send_dev_message({ action: "new_version", remove_version: x.version })
                 outstandings.remove(x)
                 x = x.next
               }
@@ -396,7 +402,7 @@ async function handle_subscribe() {
           patches: [{ unit: 'text', range: '[0:0]', content: body }]
         }
         versions.push(new_version)
-        chrome.runtime.sendMessage({ action: "new_version", version: new_version })
+        send_dev_message({ action: "new_version", version: new_version })
         return;
       }
 
@@ -411,7 +417,7 @@ async function handle_subscribe() {
         patches
       }
       versions.push(new_version)
-      chrome.runtime.sendMessage({ action: "new_version", version: new_version })
+      send_dev_message({ action: "new_version", version: new_version })
 
       let before_v = doc.getLocalVersion();
 
@@ -506,7 +512,7 @@ async function handle_subscribe() {
         if (!new_version.patches) new_version.patches = [{ unit: 'body', range: '', content: update.body }]
 
         versions.push(new_version)
-        chrome.runtime.sendMessage({ action: "new_version", version: new_version })
+        send_dev_message({ action: "new_version", version: new_version })
       }
     }, on_fail)
 
@@ -547,7 +553,7 @@ async function handle_subscribe() {
           signal: outstanding_change.ac.signal,
         }
         versions.push(ops)
-        chrome.runtime.sendMessage({ action: "new_version", version: ops })
+        send_dev_message({ action: "new_version", version: ops })
 
         textarea.style.caretColor = 'red'
         try {
@@ -565,7 +571,7 @@ async function handle_subscribe() {
             }
             versions.pop()
             outstanding_changes.remove(outstanding_change)
-            chrome.runtime.sendMessage({ action: "new_version", remove_count: start_size - outstanding_changes.size })
+            send_dev_message({ action: "new_version", remove_count: start_size - outstanding_changes.size })
 
             textarea.value = last_seen_state = outstanding_change.restore_state
             current_version = outstanding_change.restore_version
@@ -605,7 +611,7 @@ async function handle_subscribe() {
           peer
         }
         versions.push(new_version)
-        chrome.runtime.sendMessage({ action: "new_version", version: new_version })
+        send_dev_message({ action: "new_version", version: new_version })
 
         last_version = new_version.version
         let change = { ...new_version }
@@ -624,7 +630,7 @@ async function handle_subscribe() {
                 if (versions[i] && versions[i].parents[0] == change.version[0]) {
                   versions[i].parents = change.parents
                 }
-                chrome.runtime.sendMessage({ action: "new_version", override_versions: versions })
+                send_dev_message({ action: "new_version", override_versions: versions })
                 break
               }
             }
@@ -696,7 +702,7 @@ async function handle_subscribe() {
         if (change.patches[0].range === '') change_stack.remove_before(change)
 
         versions.push(new_version)
-        chrome.runtime.sendMessage({ action: "new_version", version: new_version })
+        send_dev_message({ action: "new_version", version: new_version })
       } catch (e) {
         console.log(`eeee = ${e}`)
         console.log(`eeee = ${e.stack}`)

@@ -208,8 +208,11 @@ async function handle_subscribe() {
     let last_text_code_points = 0;
 
     let outstandings = make_linklist();
+    let actor_seqs = {}
 
     doc = new Doc(peer);
+
+    get_parents = () => doc.getRemoteVersion().map((x) => x.join("-")).sort()
 
     on_show_diff = (from_version) => {
       var scrollPos = (window.getComputedStyle(diff_d).display === "none") ? {
@@ -397,6 +400,10 @@ async function handle_subscribe() {
         return;
       }
 
+      let v = decode_version(version[0])
+      if (v[1] <= (actor_seqs[v[0]] ?? -1)) return
+      actor_seqs[v[0]] = v[1]
+
       let new_version = {
         method: "GET",
         version,
@@ -406,7 +413,7 @@ async function handle_subscribe() {
       versions.push(new_version)
       chrome.runtime.sendMessage({ action: "new_version", version: new_version })
 
-      let v = doc.getLocalVersion();
+      let before_v = doc.getLocalVersion();
 
       try {
         patches = patches.map((p) => ({
@@ -415,7 +422,6 @@ async function handle_subscribe() {
           ...(p.content ? { content: p.content, content_codepoints: [...p.content] } : {}),
         }))
 
-        let v = decode_version(version[0])
         v = encode_version(v[0], v[1] + 1 - patches.reduce((a, b) => a + (b.content?.length ? b.content_codepoints.length : 0) + (b.range[1] - b.range[0]), 0))
 
         let ps = parents
@@ -452,7 +458,7 @@ async function handle_subscribe() {
       let [new_text, new_sel] = applyChanges(
         textarea.value,
         sel,
-        doc.xfSince(v)
+        doc.xfSince(before_v)
       );
 
       textarea.value = last_text = new_text;

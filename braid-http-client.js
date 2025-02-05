@@ -165,7 +165,7 @@ async function braid_fetch (url, params = {}) {
         params.headers.set('heartbeats', typeof params.heartbeats === 'number' ? `${params.heartbeats}s` : params.heartbeats)
 
     // Prevent browsers from going to disk cache
-    params.cache = 'no-cache'
+    if (!params.cache) params.cache = 'no-cache'
 
     // Prepare patches
     if (params.patches) {

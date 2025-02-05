@@ -180,6 +180,7 @@ async function handle_subscribe() {
       peer,
       headers: { Accept: content_type, ...(merge_type ? { ['Merge-Type']: merge_type } : {}) },
       signal: abort_controller.signal,
+      cache: 'no-store',
       subscribe: true,
       retry: true
     })
@@ -196,7 +197,10 @@ async function handle_subscribe() {
   for (let x of response.headers.entries()) headers[x[0].toLowerCase()] = x[1]
   send_dev_message({ action: "new_headers", headers })
 
-  if (headers.subscribe !== 'true') return
+  if (headers.subscribe !== 'true') {
+    abort_controller.abort()
+    return
+  }
 
   if (headers['merge-type']) merge_type = headers['merge-type']
 

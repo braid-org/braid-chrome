@@ -1,6 +1,4 @@
-// copy of https://github.com/braid-org/braid-http/blob/master/braid-http-client.js v1.3.15
-
-// var peer = Math.random().toString(36).substr(2)
+// copy of https://github.com/braid-org/braid-http/blob/master/braid-http-client.js v1.3.75
 
 // ***************************
 // http
@@ -66,16 +64,19 @@ function braidify_http (http) {
                     on_update = f
 
                     // And set up a subscription parser
-                    var parser = subscription_parser((update, error) => {
+                    var parser = subscription_parser(async (update, error) => {
                         if (!error)
-                            on_update && on_update(update)
+                            on_update && (await on_update(update))
                         else
                             on_error && on_error(error)
                     })
 
                     // That will run each time we get new data
+                    var chain = Promise.resolve()
                     res.orig_on('data', (chunk) => {
-                        parser.read(chunk)
+                        chain = chain.then(async () => {
+                            await parser.read(chunk)
+                        })
                     })
                 }
 
@@ -122,7 +123,8 @@ var normal_fetch,
 
 if (is_nodejs) {
     // Nodejs
-    normal_fetch = fetch
+    normal_fetch = typeof fetch !== 'undefined' && fetch
+    braid_fetch.enable_multiplex = false
 } else {
     // Web Browser
     normal_fetch = window.fetch
@@ -162,10 +164,13 @@ async function braid_fetch (url, params = {}) {
         params.headers.set('peer', params.peer)
     
     if (params.heartbeats)
-        params.headers.set('heartbeats', typeof params.heartbeats === 'number' ? `${params.heartbeats}s` : params.heartbeats)
+        params.headers.set('heartbeats',
+                           typeof params.heartbeats === 'number'
+                           ? `${params.heartbeats}s`
+                           : params.heartbeats)
 
     // Prevent browsers from going to disk cache
-    if (!params.cache) params.cache = 'no-cache'
+    params.cache = 'no-cache'
 
     // Prepare patches
     if (params.patches) {
@@ -228,32 +233,61 @@ async function braid_fetch (url, params = {}) {
     var res = null
     var subscription_cb = null
     var subscription_error = null
-    var cb_running = false
+
+    // Multiplexing book-keeping;
+    // basically, if the user tries to make two or more subscriptions to the same origin,
+    // then we want to multiplex
+    var subscription_counts_on_close = null
+    if (params.headers.has('subscribe')) {
+        var origin = new URL(url, typeof document !== 'undefined' ? document.baseURI : undefined).origin
+        if (!braid_fetch.subscription_counts)
+            braid_fetch.subscription_counts = {}
+        braid_fetch.subscription_counts[origin] =
+            (braid_fetch.subscription_counts[origin] ?? 0) + 1
+
+        subscription_counts_on_close = () => {
+            subscription_counts_on_close = null
+            braid_fetch.subscription_counts[origin]--
+            if (!braid_fetch.subscription_counts[origin])
+                delete braid_fetch.subscription_counts[origin]
+        }
+    }
 
     return await new Promise((done, fail) => {
         connect()
         async function connect() {
+            // we direct all error paths here so we can make centralized retry decisions
             let on_error = e => {
                 on_error = () => {}
 
-                if (!params.retry || 
-                    e.name === "AbortError" || 
-                    e.startsWith?.('Parse error in headers') ||
-                    cb_running) {
+                // The fetch is probably down already, but there are some other errors that could have happened,
+                // and in those cases, we want to make sure to close the fetch
+                underlying_aborter?.abort()
 
+                // see if we should retry..
+                var retry = params.retry &&    // only try to reconnect if the user has chosen to
+                    e.name !== "AbortError" && // don't retry if the user has chosen to abort
+                    !e.dont_retry              // some errors are unlikely to be fixed by retrying
+
+                if (retry && !original_signal?.aborted) {
+                    // retry after some time..
+                    console.log(`retrying in ${waitTime}s: ${url} after error: ${e}`)
+                    setTimeout(connect, waitTime * 1000)
+                    waitTime = Math.min(waitTime + 1, 3)
+                } else {
+                    // if we would have retried except that original_signal?.aborted,
+                    // then we want to return that as the error..
+                    if (retry && original_signal?.aborted) e = create_error('already aborted', {name: 'AbortError'})
+
+                    // let people know things are shutting down..
+                    subscription_counts_on_close?.()
                     subscription_error?.(e)
                     return fail(e)
                 }
-
-                underlying_aborter.abort()
-
-                console.log(`retrying in ${waitTime}s: ${url} after error: ${e}`)
-                setTimeout(connect, waitTime * 1000)
-                waitTime = Math.min(waitTime + 1, 3)
             }
 
             try {
-                if (original_signal?.aborted) throw new DOMException('already aborted', 'AbortError')
+                if (original_signal?.aborted) throw create_error('already aborted', {name: 'AbortError'})
 
                 // We need a fresh underlying abort controller each time we connect
                 underlying_aborter = new AbortController()
@@ -269,10 +303,20 @@ async function braid_fetch (url, params = {}) {
                 // undocumented feature used by braid-chrome
                 // to see the fetch args as they are right before it is actually called,
                 // to display them for the user in the dev panel
-                params.onFetch?.(url, params)
+                params.onFetch?.(url, params, underlying_aborter)
 
                 // Now we run the original fetch....
-                res = await normal_fetch(url, params)
+
+                // try multiplexing if the multiplex flag is set, and conditions are met
+                var mux_params = params.multiplex ?? braid_fetch.enable_multiplex
+                if (mux_params !== false &&
+                    (params.headers.has('multiplex-through') ||
+                    (params.headers.has('subscribe') &&
+                        braid_fetch.subscription_counts?.[origin] >
+                            (!mux_params ? 1 : (mux_params.after ?? 0))))) {
+                    res = await multiplex_fetch(url, params, mux_params)
+                } else
+                    res = await normal_fetch(url, params)
 
                 // And customize the response with a couple methods for getting
                 // the braid subscription data:
@@ -301,8 +345,9 @@ async function braid_fetch (url, params = {}) {
                         }
                     }
 
-                    if (!res.ok)
-                        throw new Error('Request returned not ok status:', res.status)
+                    if (res.status !== 209) {
+                        throw new Error(`Got unexpected subscription status code: ${res.status}. Expected 209.`)
+                    }
 
                     if (res.bodyUsed)
                         // TODO: check if this needs a return
@@ -314,15 +359,22 @@ async function braid_fetch (url, params = {}) {
 
                         // Each time something happens, we'll either get a new
                         // version back, or an error.
-                        (result, err) => {
+                        async (result, err) => {
                             if (!err) {
                                 // check whether we aborted
-                                if (original_signal?.aborted) throw new DOMException('already aborted', 'AbortError')
+                                if (original_signal?.aborted)
+                                    throw create_error('already aborted', {name: 'AbortError'})
 
                                 // Yay!  We got a new version!  Tell the callback!
-                                cb_running = true
-                                cb(result)
-                                cb_running = false
+                                try {
+                                    await cb(result)
+                                } catch (e) {
+                                    // This error is happening in the users code,
+                                    // so retrying the connection
+                                    // will probably still fail
+                                    e.dont_retry = true
+                                    throw e
+                                }
                             } else
                                 // This error handling code runs if the connection
                                 // closes, or if there is unparseable stuff in the
@@ -384,31 +436,38 @@ async function braid_fetch (url, params = {}) {
                     }
                 }
 
-                if (params.retry) {
-                    let give_up = res.status >= 400 && res.status < 600
-                    switch (res.status) {
-                        case 408: // Request Timeout
-                        case 425: // Too Early
-                        case 429: // Too Many Requests
+                if (params.retry && !res.ok) {
+                    var give_up
+                    if (params.retry.retryRes) {
+                        give_up = !params.retry.retryRes(res)
+                    } else {
+                        give_up = res.status >= 400 && res.status < 600
 
-                        case 502: // Bad Gateway
-                        case 504: // Gateway Timeout
+                        switch (res.status) {
+                            case 408: // Request Timeout
+                            case 425: // Too Early
+                            case 429: // Too Many Requests
+
+                            case 502: // Bad Gateway
+                            case 503: // Service Unavailable
+                            case 504: // Gateway Timeout
+                                give_up = false
+                        }
+                        if (res.statusText.match(/Missing Parents/i) ||
+                            res.headers.get('retry-after') !== null)
                             give_up = false
                     }
                     if (give_up) {
-                        let e = new Error(`giving up because of http status: ${res.status}${(res.status === 401 || res.status === 403) ? ` (access denied)` : ''}`)
-                        subscription_error?.(e)
-                        return fail(e)
-                    }
-                    if (!res.ok) throw new Error(`status not ok: ${res.status}`)
+                        if (subscription_cb) subscription_error?.(new Error(`giving up because of http status: ${res.status}${(res.status === 401 || res.status === 403) ? ` (access denied)` : ''}`))
+                    } else if (!res.ok) throw new Error(`status not ok: ${res.status}`)
                 }
 
-                if (subscription_cb) start_subscription(subscription_cb, subscription_error)
-
-                done(res)
+                if (subscription_cb && res.ok) start_subscription(subscription_cb, subscription_error)
 
                 params?.retry?.onRes?.(res)
                 waitTime = 1
+
+                done(res)
             } catch (e) { on_error(e) }
         }
     })
@@ -428,21 +487,23 @@ async function handle_fetch_stream (stream, cb, on_bytes) {
             var {done, value} = await reader.read()
         }
         catch (e) {
-            cb(null, e)
+            await cb(null, e)
             return
         }
 
         // Check if this connection has been closed!
         if (done) {
             console.debug("Connection closed.")
-            cb(null, 'Connection closed')
+            await cb(null, 'Connection closed')
             return
         }
 
         on_bytes?.(value)
 
         // Tell the parser to process some more stream
-        parser.read(value)
+        await parser.read(value)
+        if (parser.state.result === 'error')
+            return await cb(null, new Error(parser.state.message))
     }
 }
 
@@ -461,7 +522,7 @@ var subscription_parser = (cb) => ({
 
     // You give it new input information as soon as you get it, and it will
     // report back with new versions as soon as it finds them.
-    read (input) {
+    async read (input) {
 
         // Store the new input!
         for (let x of input) this.state.input.push(x)
@@ -473,7 +534,7 @@ var subscription_parser = (cb) => ({
             try {
                 this.state = parse_update (this.state)
             } catch (e) {
-                this.cb(null, e)
+                await this.cb(null, e)
                 return
             }
 
@@ -494,7 +555,8 @@ var subscription_parser = (cb) => ({
 
                 Object.defineProperty(update, 'body_text', {
                     get: function () {
-                        if (this.body != null) return new TextDecoder('utf-8').decode(this.body.buffer)
+                        if (this.body != null)
+                            return new TextDecoder('utf-8').decode(this.body.buffer)
                     }
                 })
 
@@ -504,20 +566,20 @@ var subscription_parser = (cb) => ({
                     })
                 }
 
-                try {
-                    this.cb(update)
-                } catch (e) {
-                    this.cb(null, e)
-                    return
-                }
-
                 // Reset the parser for the next version!
                 this.state = {input: this.state.input}
+
+                try {
+                    await this.cb(update)
+                } catch (e) {
+                    await this.cb(null, e)
+                    return
+                }
             }
 
             // Or maybe there's an error to report upstream
             else if (this.state.result === 'error') {
-                this.cb(null, this.state.message)
+                await this.cb(null, create_error(this.state.message, {dont_retry: true}))
                 return
             }
 
@@ -587,7 +649,10 @@ function parse_headers (input) {
     }
 
     // Extract the header string
-    var headers_source = input.slice(start, end).map(x => String.fromCharCode(x)).join('')
+    var headers_source = input.slice(start, end)
+    headers_source = Array.isArray(headers_source)
+        ? headers_source.map(x => String.fromCharCode(x)).join('')
+        : new TextDecoder().decode(headers_source)
 
     // Convert "HTTP 200 OK" to a :status: 200 header
     headers_source = headers_source.replace(/^HTTP\/?\d*\.?\d* (\d\d\d).*\r?\n/,
@@ -778,6 +843,7 @@ function parse_body (state) {
     }
 }
 
+
 // The "extra_headers" field is returned to the client on any *update* or
 // *patch* to include any headers that we've received, but don't have braid
 // semantics for.
@@ -810,7 +876,7 @@ function get_binary_length(x) {
 function deep_copy(x) {
     if (x === null || typeof x !== 'object') return x
     if (Array.isArray(x)) return x.map(x => deep_copy(x))
-    if (Object.prototype.toString.call(x) === '[object Object]')
+    if (x.constructor === Object)
         return Object.fromEntries(Object.entries(x).map(([k, x]) => [k, deep_copy(x)]))
     return x
 }
@@ -818,6 +884,456 @@ function deep_copy(x) {
 function ascii_ify(s) {
     return s.replace(/[^\x20-\x7E]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'))
 }
+
+function create_error(msg, override) {
+    var e = new Error(msg)
+    if (override) Object.assign(e, override)
+    return e
+}
+
+async function promise_done(promise) {
+    var pending = {}
+    var ret = await Promise.race([promise, Promise.resolve(pending)])
+    return ret !== pending
+}
+
+function random_base64url(n) {
+    var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
+    var result = ''
+    for (let i = 0; i < n; i++)
+        result += chars[Math.floor(Math.random() * 64)]
+    return result
+}
+
+
+// ****************************
+// Multiplexing
+// ****************************
+
+// multiplex_fetch provides a fetch-like experience for HTTP requests
+// where the result is actually being sent over a separate multiplexed connection.
+async function multiplex_fetch(url, params, mux_params) {
+    var origin = new URL(url, typeof document !== 'undefined' ? document.baseURI : undefined).origin
+
+    // the mux_key is the same as the origin, unless it is being overriden
+    // (the overriding is done by the tests)
+    var mux_key = params.headers.get('multiplex-through')?.split('/')[3] ?? origin
+
+    // create a new multiplexer if it doesn't exist for this origin
+    if (!multiplex_fetch.multiplexers)
+        multiplex_fetch.multiplexers = {}
+
+    // this for-loop allows us to retry right away,
+    // in case of duplicate ids
+    for (let attempt = 1; ; attempt++) {
+        await new Promise(done => setTimeout(done, attempt >= 3 ? 1000 : 0))
+
+        // Create a multiplexer if it does not exist yet
+        multiplex_fetch.multiplexers[mux_key] ||=
+            create_multiplexer(origin, mux_key, params, mux_params, attempt)
+
+        // call the special fetch function for the multiplexer
+        try {
+            return await (await multiplex_fetch.multiplexers[mux_key])(url, params, mux_params, attempt)
+        } catch (e) {
+            if (e === 'retry') continue
+            throw e
+        }
+    }
+}
+
+// returns a function with a fetch-like interface that transparently multiplexes the fetch
+async function create_multiplexer(origin, mux_key, params, mux_params, attempt) {
+    var multiplex_version = '1.0'
+
+    // make up a new multiplexer id (unless it is being overriden)
+    var multiplexer = (attempt === 1 &&
+        params.headers.get('multiplex-through')?.split('/')[3])
+        || random_base64url(Math.ceil((mux_params?.id_bits ?? 72) / 6))
+
+    var requests = new Map()
+    var mux_error = null
+    var try_deleting = new Set()
+    var not_used_timeout = null
+    var mux_aborter = new AbortController()
+
+    function cleanup_multiplexer(e, stay_dead) {
+        // the multiplexer stream has died.. let everyone know..
+        mux_aborter.abort()
+        mux_error = e
+        if (!stay_dead) delete multiplex_fetch.multiplexers[mux_key]
+        for (var f of requests.values()) f()
+    }
+
+    async function try_deleting_request(request) {
+        if (!try_deleting.has(request)) {
+            try_deleting.add(request)
+            try {
+                var mux_was_done = await promise_done(mux_created_promise)
+
+                var r = await braid_fetch(`${origin}/.well-known/multiplexer/${multiplexer}/${request}`, {
+                    method: 'DELETE',
+                    headers: { 'Multiplex-Version': multiplex_version },
+                    retry: true
+                })
+
+                // if we know the multiplexer was created,
+                // but it isn't there now,
+                // and our client doesn't realize it,
+                // then shut it down ourselves
+                if (r.status === 404 && r.headers.get('Bad-Multiplexer')
+                    && mux_was_done && !mux_error) {
+                    cleanup_multiplexer(new Error('multiplexer detected to be closed'))
+                }
+
+                if (!r.ok) throw new Error('status not ok: ' + r.status)
+                if (r.headers.get('Multiplex-Version') !== multiplex_version)
+                    throw new Error('wrong multiplex version: '
+                                    + r.headers.get('Multiplex-Version')
+                                    + ', expected ' + multiplex_version)
+            } catch (e) {
+                e = new Error(`Could not cancel multiplexed request: ${e}`)
+                // console.error('' + e)
+                throw e
+            } finally { try_deleting.delete(request) }
+        }
+    }
+
+    // This promise resolves when the create_multiplexer request responds.
+    //  - its value is undefined if successfully created
+    //  - its value is false if creation failed
+    var mux_created_promise = (async () => {
+        // attempt to establish a multiplexed connection
+        try {
+            if (mux_params?.via === 'POST') throw 'skip multiplex method'
+            var r = await braid_fetch(`${origin}/${multiplexer}`, {
+                signal: mux_aborter.signal,
+                method: 'MULTIPLEX',
+                headers: {'Multiplex-Version': multiplex_version},
+                retry: true,
+                multiplex: false
+            })
+            if (r.status === 409) {
+                var e = await r.json()
+                if (e.error === 'Multiplexer already exists')
+                    return cleanup_multiplexer('retry')
+            }
+            if (!r.ok || r.headers.get('Multiplex-Version') !== multiplex_version)
+                throw 'bad'
+        } catch (e) {
+            // some servers don't like custom methods,
+            // so let's try with a well-known url
+            try {
+                r = await braid_fetch(`${origin}/.well-known/multiplexer/${multiplexer}`,
+                                        {method: 'POST',
+                                        signal: mux_aborter.signal,
+                                        headers: {'Multiplex-Version': multiplex_version},
+                                        retry: true,
+                                        multiplex: false})
+                if (r.status === 409) {
+                    var e = await r.json()
+                    if (e.error === 'Multiplexer already exists')
+                        return cleanup_multiplexer('retry')
+                }
+                if (!r.ok) throw new Error('status not ok: ' + r.status)
+                if (r.headers.get('Multiplex-Version') !== multiplex_version)
+                    throw new Error('wrong multiplex version: '
+                                    + r.headers.get('Multiplex-Version')
+                                    + ', expected ' + multiplex_version)
+            } catch (e) {
+                // fallback to normal fetch if multiplexed connection fails
+                // console.error(`Could not establish multiplexer.\n`
+                //                 + `Got error: ${e}.\nFalling back to normal connection.`)
+                cleanup_multiplexer('retry', true)
+                return false
+            }
+        }
+
+        // parse the multiplexed stream,
+        // and send messages to the appropriate requests
+        parse_multiplex_stream(r.body.getReader(), async (request, bytes) => {
+            if (requests.has(request)) requests.get(request)(bytes)
+            else try_deleting_request(request)
+        }, e => cleanup_multiplexer(e))
+    })()
+
+    // return a "fetch" for this multiplexer
+    return async (url, params, mux_params, attempt) => {
+
+        // if we already know the multiplexer is not working,
+        // then fallback to normal fetch
+        if ((await promise_done(mux_created_promise)) && (await mux_created_promise) === false) {
+            // if the user is specifically asking for multiplexing,
+            // throw an error instead
+            if (params.headers.get('multiplex-through')) throw new Error('multiplexer failed')
+
+            return await normal_fetch(url, params)
+        }
+
+        // make up a new request id (unless it is being overriden)
+        var request = (attempt === 1
+            && params.headers.get('multiplex-through')?.split('/')[4])
+            || random_base64url(Math.ceil((mux_params?.id_bits ?? 72) / 6))
+
+        // add the Multiplex-Through header without affecting the underlying params
+        var mux_headers = new Headers(params.headers)
+        mux_headers.set('Multiplex-Through', `/.well-known/multiplexer/${multiplexer}/${request}`)
+        mux_headers.set('Multiplex-Version', multiplex_version)
+
+        // also create our own aborter in case we need to abort ourselves
+        var aborter = new AbortController()
+        params.signal?.addEventListener('abort', () => aborter.abort())
+
+        // now create a new params with the new headers and abort signal
+        params = {...params, headers: mux_headers, signal: aborter.signal}
+
+        // setup a way to receive incoming data from the multiplexer
+        var buffers = []
+        var bytes_available = () => {}
+        var request_error = null
+
+        // this utility calls the callback whenever new data is available to process
+        async function process_buffers(cb) {
+            while (true) {
+                // wait for data if none is available
+                if (!mux_error && !request_error && !buffers.length)
+                    await new Promise(done => bytes_available = done)
+                if (mux_error || request_error) throw (mux_error || request_error)
+
+                // process the data
+                let ret = cb()
+                if (ret) return ret
+            }
+        }
+
+        // tell the multiplexer to send bytes for this request to us
+        requests.set(request, bytes => {
+            if (!bytes) buffers.push(bytes)
+            else if (!mux_error) buffers.push(bytes)
+            bytes_available()
+        })
+
+        // prepare a function that we'll call to cleanly tear things down
+        clearTimeout(not_used_timeout)
+        var unset = async e => {
+            unset = () => {}
+            requests.delete(request)
+            if (!requests.size) not_used_timeout = setTimeout(() => mux_aborter.abort(), mux_params?.not_used_timeout ?? 1000 * 20)
+            request_error = e
+            bytes_available()
+            if (e !== 'retry') await try_deleting_request(request)
+        }
+
+        // do the underlying fetch
+        try {
+            var mux_was_done = await promise_done(mux_created_promise)
+
+            // callback for testing
+            mux_params?.onFetch?.(url, params)
+
+            var res = await normal_fetch(url, params)
+
+            if (res.status === 409) {
+                var e = await res.json()
+                if (e.error === 'Request already multiplexed') {
+                    // the id is already in use,
+                    // so we want to retry right away with a different id
+                    throw "retry"
+                }
+            }
+
+            if (res.status === 424) {
+                // the multiplexer isn't there,
+                // could be we arrived before the multiplexer,
+                // or after it was shutdown;
+                // in either case we want to retry right away
+
+                // but before we do,
+                // if we know the multiplexer was created,
+                // but it isn't there now,
+                // and our client doesn't realize it,
+                // then shut it down ourselves before retrying,
+                // so when we retry,
+                // a new multiplexer is created
+                if (mux_was_done && !mux_error)
+                    cleanup_multiplexer(new Error('multiplexer detected to be closed'))
+
+                throw "retry"
+            }
+
+            // if the response says it's ok,
+            // but it's is not a multiplexed response,
+            // fall back to as if it was a normal fetch
+            if (res.ok && res.status !== 293) return res
+
+            if (res.status !== 293)
+                throw create_error('Could not establish multiplexed request '
+                                    + params.headers.get('multiplex-through')
+                                    + ', got status: ' + res.status,
+                                    { dont_retry: true })
+
+            if (res.headers.get('Multiplex-Version') !== multiplex_version)
+                throw create_error('Could not establish multiplexed request '
+                                    + params.headers.get('multiplex-through')
+                                    + ', got unknown version: '
+                                    + res.headers.get('Multiplex-Version'),
+                                    { dont_retry: true })
+
+            // we want to present the illusion that the connection is still open,
+            // and therefor closable with "abort",
+            // so we handle the abort ourselves to close the multiplexed request
+            params.signal.addEventListener('abort', () =>
+                unset(create_error('request aborted', {name: 'AbortError'})))
+
+            // first, we need to listen for the headers..
+            var headers_buffer = new Uint8Array()
+            var parsed_headers = await process_buffers(() => {
+                // check if the request has been closed
+                var request_ended = !buffers[buffers.length - 1]
+                if (request_ended) buffers.pop()
+
+                // aggregate all the new buffers into our big headers_buffer
+                headers_buffer = concat_buffers([headers_buffer, ...buffers])
+                buffers = []
+
+                // and if the request had ended, put that information back
+                if (request_ended) buffers.push(null)
+
+                // try parsing what we got so far as headers..
+                var x = parse_headers(headers_buffer)
+
+                // how did it go?
+                if (x.result === 'error') {
+                    // if we got an error, give up
+                    // console.log(`headers_buffer: ` + new TextDecoder().decode(headers_buffer))
+                    throw new Error('error parsing headers')
+                } else if (x.result === 'waiting') {
+                    if (request_ended)
+                        throw new Error('Multiplexed request ended before headers received.')
+                } else return x
+            })
+
+            // put the bytes left over from the header back
+            if (parsed_headers.input.length) buffers.unshift(parsed_headers.input)
+
+            // these headers will also have the status,
+            // but we want to present the status in a more usual way below
+            var status = parsed_headers.headers[':status']
+            delete parsed_headers.headers[':status']
+
+            // create our own fake response object,
+            // to mimik fetch's response object,
+            // feeding the user our request data from the multiplexer
+            var res = new Response(new ReadableStream({
+                async start(controller) {
+                    try {
+                        await process_buffers(() => {
+                            var b = buffers.shift()
+                            if (!b) return true
+                            controller.enqueue(b)
+                        })
+                    } catch (e) {
+                        controller.error(e)
+                    } finally { controller.close() }
+                }
+            }), {
+                status,
+                headers: parsed_headers.headers
+            })
+
+            // add a convenience property for the user to know if
+            // this response is being multiplexed
+            res.multiplexed_through = params.headers.get('multiplex-through')
+
+            // return the fake response object
+            return res
+        } catch (e) {
+            // if we had an error, be sure to unregister ourselves
+            unset(e)
+            throw (e === 'retry' && e) || mux_error || e
+        }
+    }
+}
+
+// waits on reader for chunks like: 123 bytes for request ABC\r\n..123 bytes..
+// which would trigger cb("ABC", bytes)
+async function parse_multiplex_stream(reader, cb, on_error) {
+    try {
+        var buffers = [new Uint8Array(0)]
+        var buffers_size = 0
+        var chunk_size = null
+        var request_id = null
+        var header_length = 0
+        var header_started = false
+
+        while (true) {
+            var { done, value } = await reader.read()
+            if (done) throw new Error('multiplex stream ended unexpectedly')
+            buffers.push(value)
+            buffers_size += value.length
+
+            while (true) {
+                if (chunk_size === null && buffers_size) {
+                    if (buffers.length > 1) buffers = [concat_buffers(buffers)]
+
+                    var headerComplete = false
+                    while (buffers[0].length > header_length) {
+                        const byte = buffers[0][header_length]
+                        header_length++
+
+                        if (byte !== 13 && byte !== 10) header_started = true
+                        if (header_started && byte === 10) {
+                            headerComplete = true
+                            break
+                        }
+                    }
+                    if (headerComplete) {
+                        var headerStr = new TextDecoder().decode(buffers[0].slice(0, header_length))
+                        var m = headerStr.match(/^[\r\n]*((\d+) bytes for|close|start) response ([A-Za-z0-9_-]+)\r\n$/)
+
+                        if (!m) throw new Error('invalid multiplex header')
+                        request_id = m[3]
+
+                        buffers[0] = buffers[0].slice(header_length)
+                        buffers_size -= header_length
+
+                        if (m[1] === 'close' || m[1] === 'start') {
+                            cb(request_id, m[1] === 'start' ? new Uint8Array() : undefined)
+                            header_length = 0
+                            header_started = false
+                        } else chunk_size = 1 * m[2]
+                    } else break
+                } else if (chunk_size !== null && buffers_size >= chunk_size) {
+                    if (buffers.length > 1) buffers = [concat_buffers(buffers)]
+
+                    var chunk = buffers[0].slice(0, chunk_size)
+                    buffers[0] = buffers[0].slice(chunk_size)
+                    buffers_size -= chunk_size
+
+                    // console.log(`request_id: ${request_id}, ${new TextDecoder().decode(chunk)}`)
+
+                    cb(request_id, chunk)
+
+                    chunk_size = null
+                    header_length = 0
+                    header_started = false
+                } else break
+            }
+        }
+    } catch (e) { on_error(e) }
+}
+
+// concatenates an array of Uint8Array's, into a single one
+function concat_buffers(buffers) {
+    const x = new Uint8Array(buffers.reduce((a, b) => a + b.length, 0))
+    let offset = 0
+    for (const b of buffers) {
+        x.set(b, offset)
+        offset += b.length
+    }
+    return x
+}
+
 
 // ****************************
 // Exports

@@ -411,8 +411,7 @@ async function handle_subscribe() {
       }
 
       let v = decode_version(version[0])
-      if (v[1] <= (actor_seqs[v[0]] ?? -1)) return
-      actor_seqs[v[0]] = v[1]
+      if (actor_seqs[v[0]]?.has(v[1])) return
 
       let new_version = {
         method: "GET",
@@ -432,7 +431,13 @@ async function handle_subscribe() {
           ...(p.content ? { content: p.content, content_codepoints: [...p.content] } : {}),
         }))
 
-        v = encode_version(v[0], v[1] + 1 - patches.reduce((a, b) => a + (b.content?.length ? b.content_codepoints.length : 0) + (b.range[1] - b.range[0]), 0))
+        var high_seq = v[1]
+        var low_seq = v[1] + 1 - patches.reduce((a, b) => a + (b.content?.length ? b.content_codepoints.length : 0) + (b.range[1] - b.range[0]), 0)
+
+        if (!actor_seqs[v[0]]) actor_seqs[v[0]] = new RangeSet()
+        actor_seqs[v[0]].add_range(low_seq, high_seq)
+
+        v = encode_version(v[0], low_seq)
 
         let ps = parents
 

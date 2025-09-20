@@ -87,8 +87,9 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
   } else if (request.cmd == 'loaded') {
     version = request.dev_message?.version
     parents = request.dev_message?.parents
-    let req_content_type = request.headers?.['content-type']?.split(/[;,]/)[0]
-    content_type = request.dev_message?.content_type || req_content_type
+    content_type = request.dev_message?.content_type ||
+      request.response_headers?.['content-type']?.split(/[;,]/)[0] ||
+      request.request_headers?.accept?.split(/[;,]/)[0]
     merge_type = request.dev_message?.merge_type || request.headers['merge-type']
     subscribe = !(request.dev_message?.subscribe === false)
     edit_source = request.dev_message?.edit_source
@@ -252,11 +253,13 @@ async function handle_subscribe() {
         switch (status) {
           case -1:
             // Deleted text with a red background
-            spanElem.style.backgroundColor = '#ffa8a850';
+            // spanElem.style.backgroundColor = '#ffa8a850';
+            spanElem.style.backgroundColor = '#ffa8a824';
             break;
           case 1:
             // Inserted text with a green background
             spanElem.style.backgroundColor = '#a8ffaa50';
+            spanElem.style.opacity = 0.25;
             break;
         }
         spanElem.textContent = text;

@@ -1,14 +1,32 @@
 
 let tab_to_dev = {}
+let latest_request_headers_for_tab = {}
 let latest_headers_for_tab = {}
 let tab_to_last_dev_message = {}
 
 chrome.tabs.onUpdated.addListener(function callback(tabid, info, tab) {
   // Check if tab update status is 'complete'
   if (info.status === 'complete') {
-    chrome.tabs.sendMessage(tabid, {cmd: 'loaded', headers: latest_headers_for_tab[tabid], dev_message: tab_to_last_dev_message[tabid], url: tab.url })
+    chrome.tabs.sendMessage(tabid, {
+      cmd: 'loaded',
+      request_headers: latest_request_headers_for_tab[tabid],
+      headers: latest_headers_for_tab[tabid],
+      dev_message: tab_to_last_dev_message[tabid],
+      url: tab.url
+    })
   }
 })
+
+chrome.webRequest.onSendHeaders.addListener(
+  details => {
+    console.log('%cRequest headers being sent!', 'background: #8f8', details)
+    latest_request_headers_for_tab[details.tabId] = Object.fromEntries(
+      details.requestHeaders.map(x => [x.name.toLowerCase(), x.value])
+    )
+  },
+  { urls: ["<all_urls>"], types: ["main_frame"] },
+  ["requestHeaders"]
+)
 
 chrome.webRequest.onHeadersReceived.addListener(
   details => {

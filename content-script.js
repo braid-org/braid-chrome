@@ -205,7 +205,20 @@ async function handle_subscribe() {
 
   if (headers['merge-type']) merge_type = headers['merge-type']
 
-  if (headers['content-type']?.split(/[;,]/)[0] !== 'text/html' || edit_source) show_editor()
+  // Check if this is a binary file (in /blobs/ path) or has binary content type
+  const isBinaryFile = window.location.pathname.includes('/blobs/') ||
+    (content_type && (
+      content_type.startsWith('image/') ||
+      content_type.startsWith('video/') ||
+      content_type.startsWith('audio/') ||
+      content_type.startsWith('application/octet-stream') ||
+      content_type.includes('binary')
+    ))
+
+  // For binary files, don't show editor - let them load normally but still subscribe
+  if (!isBinaryFile && (headers['content-type']?.split(/[;,]/)[0] !== 'text/html' || edit_source)) {
+    show_editor()
+  }
 
   if (merge_type === 'dt') {
     let wasmModuleBuffer = await (await fetch(chrome.runtime.getURL('dt_bg.wasm'))).arrayBuffer();
@@ -721,6 +734,208 @@ async function handle_subscribe() {
       }
       textarea.value = JSON.stringify(doc)
       set_style_good(true)
+    }, on_fail)
+  } else if (isBinaryFile) {
+    // Handle binary files (images, videos, etc.)
+    console.log(`got binary file..`)
+
+    // Create a small indicator to show subscription is active
+    let indicator = make_html(`<div
+      style="position: fixed; top: 5px; right: 5px; z-index: 9999; background: rgba(0,255,0,0.8); color: white; padding: 4px 8px; border-radius: 3px; font-size: 12px; font-family: monospace;"
+    >• Live</div>`)
+
+    // Only show indicator if we're not in edit_source mode
+    if (!edit_source) {
+      document.body.appendChild(indicator)
+    }
+
+    // Update online indicator to use our new indicator
+    online = indicator
+
+    // Track the current version to avoid infinite reload loops
+    let currentVersion = null
+
+    // Get initial version from response headers
+    if (headers['current-version']) {
+      currentVersion = headers['current-version'].replace(/"/g, '')
+      console.log('Binary file initial version:', currentVersion)
+    }
+
+    // Add drag-and-drop functionality for binary files
+    function setupDragAndDrop() {
+      // Create visual overlay for drag feedback
+      let dragOverlay = document.createElement('div')
+      dragOverlay.id = 'braid-drag-overlay'
+      dragOverlay.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 123, 255, 0.1); border: 3px dashed #007bff; display: none; z-index: 9998; pointer-events: none; align-items: center; justify-content: center; font-family: monospace; font-size: 16px; color: #007bff;'
+      dragOverlay.textContent = 'Drop image here to upload'
+
+      document.body.appendChild(dragOverlay)
+
+      function preventDefaults(e) {
+        e.preventDefault()
+        e.stopPropagation()
+      }
+
+      function highlight(e) {
+        dragOverlay.style.display = 'flex'
+      }
+
+      function unhighlight(e) {
+        dragOverlay.style.display = 'none'
+      }
+
+      function handleDrop(e) {
+        const dt = e.dataTransfer
+        const files = dt.files
+
+        if (files.length > 0) {
+          const file = files[0]
+
+          // Check if it's an image file
+          if (file.type.startsWith('image/')) {
+            console.log('Image file dropped:', file.name, file.type)
+            uploadImage(file)
+          } else {
+            console.log('Dropped file is not an image:', file.type)
+            // Optionally show an error message
+            showErrorMessage('Please drop an image file')
+          }
+        }
+      }
+
+      // Prevent default drag behaviors
+      document.addEventListener('dragenter', preventDefaults, false)
+      document.addEventListener('dragover', preventDefaults, false)
+      document.addEventListener('dragleave', preventDefaults, false)
+      document.addEventListener('drop', preventDefaults, false)
+
+      // Highlight drop area when item is dragged over it
+      document.addEventListener('dragenter', highlight, false)
+      document.addEventListener('dragover', highlight, false)
+
+      // Unhighlight when drag leaves or drops
+      document.addEventListener('dragleave', unhighlight, false)
+      document.addEventListener('drop', unhighlight, false)
+
+      // Handle dropped files
+      document.addEventListener('drop', handleDrop, false)
+
+      async function uploadImage(file) {
+        try {
+          console.log('Uploading image:', file.name, 'Size:', file.size, 'Type:', file.type)
+
+          // Show uploading indicator
+          indicator.style.background = 'rgba(255, 165, 0, 0.8)' // Orange color for uploading
+          indicator.textContent = '• Uploading...'
+
+          // Convert file to ArrayBuffer for upload
+          const arrayBuffer = await file.arrayBuffer()
+
+          // Create a new version number (timestamp-based for simplicity)
+          const newVersion = Date.now().toString()
+
+          // Prepare the PUT request with Braid-HTTP headers
+          const uploadParams = {
+            method: 'PUT',
+            headers: {
+              'Content-Type': file.type,
+              'Current-Version': `"${newVersion}"`
+            },
+            body: arrayBuffer,
+            peer: peer,
+            version: [newVersion],
+            parents: currentVersion ? [currentVersion] : [],
+            retry: true
+          }
+
+          console.log('Sending image upload:', {
+            version: newVersion,
+            parents: currentVersion ? [currentVersion] : [],
+            size: arrayBuffer.byteLength,
+            type: file.type
+          })
+
+          // Send the upload request
+          const uploadResponse = await braid_fetch_wrapper(window.location.href, uploadParams)
+
+          console.log('Upload response:', uploadResponse.status)
+
+          if (uploadResponse.ok) {
+            console.log('Image uploaded successfully!')
+
+            // Update our current version
+            currentVersion = newVersion
+
+            // Show success indicator briefly before reload
+            indicator.style.background = 'rgba(0, 255, 0, 0.8)' // Green for success
+            indicator.textContent = '• Uploaded!'
+
+            // Reload after a short delay to show the new image
+            setTimeout(() => {
+              location.reload()
+            }, 1000)
+          } else {
+            throw new Error(`Upload failed with status: ${uploadResponse.status}`)
+          }
+
+        } catch (error) {
+          console.error('Failed to upload image:', error)
+          showErrorMessage('Failed to upload image: ' + error.message)
+
+          // Reset indicator to normal state
+          indicator.style.background = 'rgba(0, 255, 0, 0.8)'
+          indicator.textContent = '• Live'
+        }
+      }
+
+      function showErrorMessage(message) {
+        // Create temporary error message
+        const errorDiv = document.createElement('div')
+        errorDiv.style.cssText = 'position: fixed; top: 50px; right: 5px; z-index: 10000; background: rgba(255, 0, 0, 0.9); color: white; padding: 8px 12px; border-radius: 4px; font-size: 12px; font-family: monospace; max-width: 300px;'
+        errorDiv.textContent = message
+
+        document.body.appendChild(errorDiv)
+
+        // Remove after 3 seconds
+        setTimeout(() => {
+          if (errorDiv.parentNode) {
+            errorDiv.parentNode.removeChild(errorDiv)
+          }
+        }, 3000)
+      }
+    }
+
+    // Setup drag-and-drop if not in edit_source mode
+    if (!edit_source) {
+      setupDragAndDrop()
+    }
+
+    response.subscribe(update => {
+      let { version, parents, patches, body, status } = update
+      if (status && parseInt(status) !== 200) return console.log(`ignoring update with status ${status}`)
+
+      console.log('Binary file update received:', { version, currentVersion })
+
+      // Only reload if we get a different version than what we already have
+      if (version && version.length > 0) {
+        const newVersion = version[0]
+
+        if (currentVersion && newVersion === currentVersion) {
+          console.log('Same version, ignoring update')
+          return
+        }
+
+        console.log('New version detected, reloading page...', { old: currentVersion, new: newVersion })
+        currentVersion = newVersion
+
+        // For binary files, just reload the page when updates occur
+        // This ensures the latest version of the binary file is displayed
+        location.reload()
+      } else if (!currentVersion) {
+        // If we don't have a version tracked, reload on first body update
+        console.log('No version tracked, reloading on first update')
+        location.reload()
+      }
     }, on_fail)
   }
 }

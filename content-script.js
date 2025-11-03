@@ -26,6 +26,8 @@ var get_parents = () => null
 
 var abort_controller = new AbortController();
 
+var is_chrome_showing_media = false
+
 window.errorify = (msg) => {
   console.log(`errorify: ${msg?.stack ?? msg}`)
   if (textarea) {
@@ -88,7 +90,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     version = request.dev_message?.version
     parents = request.dev_message?.parents
     content_type = request.dev_message?.content_type ||
-      request.response_headers?.['content-type']?.split(/[;,]/)[0] ||
+      request.headers?.['content-type']?.split(/[;,]/)[0] ||
       request.request_headers?.accept?.split(/[;,]/)[0]
     merge_type = request.dev_message?.merge_type || request.headers['merge-type']
     subscribe = !(request.dev_message?.subscribe === false)
@@ -98,6 +100,21 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     for (let x of Object.entries(request.headers)) headers[x[0]] = x[1]
 
     send_dev_message({ action: "init", headers, versions, raw_messages, get_failed })
+
+    is_chrome_showing_media = 
+      // showing an image..
+      (document.body?.firstElementChild?.tagName === 'IMG' && 
+      document.body.firstElementChild.src === location.href) ||
+      // showing a video or audio..
+      (document.body?.firstElementChild?.tagName === 'VIDEO' && 
+      document.body.firstElementChild.firstElementChild?.src === location.href)
+
+    // if chrome is displaying the resource as an image, video or audio,
+    // make it a drop target, and show a delete icon
+    if (is_chrome_showing_media) {
+      setupDragAndDrop()
+      addDeleteIcon()
+    }
 
     if (version || parents) handle_specific_version()
     else if (subscribe) handle_subscribe()
@@ -164,6 +181,7 @@ async function handle_subscribe() {
     document.body.innerHTML = ''
     document.body.style.background = 'none'
     document.body.append(main_div)
+    show_editor = () => {}
   }
 
   let on_fail = e => {
@@ -194,6 +212,7 @@ async function handle_subscribe() {
     return
   }
 
+  var og_headers = headers
   headers = {}
   for (let x of response.headers.entries()) headers[x[0].toLowerCase()] = x[1]
   send_dev_message({ action: "new_headers", headers })
@@ -205,9 +224,15 @@ async function handle_subscribe() {
 
   if (headers['merge-type']) merge_type = headers['merge-type']
 
-  if (headers['content-type']?.split(/[;,]/)[0] !== 'text/html' || edit_source) show_editor()
+  if (headers['content-type']?.split(/[;,]/)[0] === 'text/html' && !edit_source) {
+    // skip first show_editor attempt
+    var og_show_editor = show_editor
+    show_editor = () => show_editor = og_show_editor
+  }
 
   if (merge_type === 'dt') {
+    show_editor()
+
     let wasmModuleBuffer = await (await fetch(chrome.runtime.getURL('dt_bg.wasm'))).arrayBuffer();
     const imports = __wbg_get_imports();
     __wbg_init_memory(imports);
@@ -485,6 +510,7 @@ async function handle_subscribe() {
       textarea.selectionEnd = new_sel[1];
     }, on_fail)
   } else if (merge_type == 'simpleton') {
+    show_editor()
 
     console.log(`got simpleton..`)
 
@@ -595,6 +621,8 @@ async function handle_subscribe() {
   } else if (merge_type) {
     throw 'unsupported merge-type: ' + merge_type
   } else if (content_type == 'application/json') {
+    show_editor()
+
     console.log(`got application/json..`)
 
     var doc = null
@@ -722,8 +750,141 @@ async function handle_subscribe() {
       textarea.value = JSON.stringify(doc)
       set_style_good(true)
     }, on_fail)
+  } else if (is_chrome_showing_media) {
+    var currentVersion = -Infinity
+    try {
+      currentVersion = 1*JSON.parse(`[${og_headers['version']}]`)[0]
+    } catch (e) {}
+
+    response.subscribe(update => {
+      var new_version = 1*update.version[0]
+      if (new_version > currentVersion) {
+        currentVersion = new_version
+        location.reload()
+      }
+    })
   }
 }
+
+function addDeleteIcon() {
+  var d = document.createElement('div')
+  d.style.cssText = 'position: fixed; top: 0; right: 0; background: rgba(255, 255, 255, 0.0); z-index: 0; align-items: center; justify-content: center; display: flex; width: 25px; height: 25px; padding: 5px;'
+  
+  // https://www.reshot.com/free-svg-icons/item/trash-ZP5J3CWHL6/
+  d.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" style="width: 100%; height: 100%; fill: rgb(255,255,255,0.5); cursor: pointer"><path d="M22 5a1 1 0 0 1-1 1H3a1 1 0 0 1 0-2h5V3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v1h5a1 1 0 0 1 1 1zM4.934 21.071 4 8h16l-.934 13.071a1 1 0 0 1-1 .929H5.931a1 1 0 0 1-.997-.929zM15 18a1 1 0 0 0 2 0v-6a1 1 0 0 0-2 0zm-4 0a1 1 0 0 0 2 0v-6a1 1 0 0 0-2 0zm-4 0a1 1 0 0 0 2 0v-6a1 1 0 0 0-2 0z"/></svg>'
+
+  d.onclick = async () => {
+    if (!confirm(`Are you sure you want to DELETE this resource from the server?`)) return
+    try {
+      var r = await braid_fetch(location.href, {
+        method: 'DELETE',
+        retry: true
+      })
+      if (!r.ok) {
+        alert(`There was an error deleting (${r.status}): ` + await r.text())
+      } else {
+        location.reload()
+      }
+    } catch (e) {
+      alert('There was an error deleting: ' + e)
+    }
+  }
+
+  document.body.appendChild(d)
+}
+
+function setupDragAndDrop() {
+  // Create visual overlay for drag feedback
+  let dragOverlay = document.createElement('div')
+  dragOverlay.id = 'braid-drag-overlay'
+  dragOverlay.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 123, 255, 0.1); border: 3px dashed #007bff; display: none; z-index: 9998; pointer-events: none; align-items: center; justify-content: center; font-family: monospace; font-size: 16px; color: #007bff;'
+  dragOverlay.textContent = 'Drop image here to upload'
+
+  document.body.appendChild(dragOverlay)
+
+  function preventDefaults(e) {
+    e.preventDefault()
+    e.stopPropagation()
+  }
+
+  function highlight(e) {
+    dragOverlay.style.display = 'flex'
+  }
+
+  function unhighlight(e) {
+    dragOverlay.style.display = 'none'
+  }
+
+  function handleDrop(e) {
+    var files = e.dataTransfer.files
+    if (files.length > 0) uploadImage(files[0])
+  }
+
+  // Prevent default drag behaviors
+  document.addEventListener('dragenter', preventDefaults, false)
+  document.addEventListener('dragover', preventDefaults, false)
+  document.addEventListener('dragleave', preventDefaults, false)
+  document.addEventListener('drop', preventDefaults, false)
+
+  // Highlight drop area when item is dragged over it
+  document.addEventListener('dragenter', highlight, false)
+  document.addEventListener('dragover', highlight, false)
+
+  // Unhighlight when drag leaves or drops
+  document.addEventListener('dragleave', unhighlight, false)
+  document.addEventListener('drop', unhighlight, false)
+
+  // Handle dropped files
+  document.addEventListener('drop', handleDrop, false)
+
+  async function uploadImage(file) {
+    try {
+      console.log('Uploading image:', file.name, 'Size:', file.size, 'Type:', file.type)
+
+      // Create a small indicator to show subscription is active
+      let indicator = make_html(`<div
+        style="position: fixed; top: 5px; right: 5px; z-index: 9999; background: rgba(0,255,0,0.8); color: white; padding: 4px 8px; border-radius: 3px; font-size: 12px; font-family: monospace;"
+      ></div>`)
+
+      document.body.appendChild(indicator)
+
+      // Show uploading indicator
+      indicator.style.background = 'rgba(255, 165, 0, 0.8)' // Orange color for uploading
+      indicator.textContent = '• Uploading...'
+
+      // Convert file to ArrayBuffer for upload
+      const arrayBuffer = await file.arrayBuffer()
+
+
+      // Prepare the PUT request with Braid-HTTP headers
+      const uploadParams = {
+        method: 'PUT',
+        headers: {
+          'Content-Type': file.type,
+        },
+        body: arrayBuffer,
+        retry: true
+      }
+
+      // Send the upload request
+      const uploadResponse = await braid_fetch_wrapper(window.location.href, uploadParams)
+
+      indicator.remove()
+
+      if (uploadResponse.ok) {
+
+
+        location.reload()
+      } else {
+        alert(`Upload failed with status: ${uploadResponse.status}`)
+      }
+
+    } catch (error) {
+      alert(`Upload failed with error: ${error}`)
+    }
+  }
+}
+
 
 async function constructHTTPRequest(url, params) {
   let httpRequest = `${params.method ?? 'GET'} ${url}\r\n`

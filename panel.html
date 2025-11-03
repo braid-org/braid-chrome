@@ -2,6 +2,7 @@
 <html>
   <head>
     <script src="panel.js"></script>
+    <script src="braid-http-client.js"></script>
   </head>
   <style>
     body {
@@ -126,6 +127,16 @@
             padding: 5px;">
           <input type="checkbox" id="edit_source" style="margin-right: 5px;cursor:pointer" />
           <label for="edit_source" style="cursor:pointer">Edit source</label>
+        </div>
+
+        <div>
+          <button id="put_button">PUT</button>
+          <span id="put_output"></span>
+        </div>
+
+        <div>
+          <button id="delete_button">DELETE</button>
+          <span id="delete_output"></span>
         </div>
 
       </div>

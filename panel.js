@@ -71,6 +71,80 @@ function connect() {
         if (edit_source.checked) backgroundConnection.postMessage({ cmd: "edit_source" })
         else tell_page_to_load_new_content_type()
     }
+
+    put_button.onclick = async () => {
+        var url = await new Promise(done => {
+            chrome.devtools.inspectedWindow.eval("window.location.href",
+                (url) => done(url))
+        })
+
+        // Create a hidden file input element
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        
+        // Optional: Set accepted file types
+        // fileInput.accept = '.txt,.pdf,.jpg,.png';  // Specify file types
+        // fileInput.multiple = true;  // Allow multiple file selection
+        
+        // Handle file selection
+        fileInput.onchange = async (event) => {
+            const files = event.target.files;
+            if (files.length > 0) {
+                const file = files[0];
+                const arrayBuffer = await file.arrayBuffer()
+
+                // Send the upload request
+                put_output.textContent = 'uploading..'
+                try {
+                    var r = await braid_fetch(url, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': file.type },
+                        body: arrayBuffer,
+                        retry: true
+                    })
+                    if (r.ok) {
+                        put_output.textContent = 'uploaded, reloading..'
+                        tell_page_to_load_new_content_type()
+                    } else {
+                        put_output.textContent = `Error: ${r.status}, `
+                        put_output.textContent += await r.text()
+                    }
+                } catch (e) {
+                    put_output.textContent = `Error: ${e}`
+                }
+            }
+        };
+        
+        // Trigger the file dialog
+        fileInput.click();
+    }
+
+    delete_button.onclick = async () => {
+        if (!confirm(`Are you sure you want to DELETE this resource from the server?`)) return
+
+        var url = await new Promise(done => {
+            chrome.devtools.inspectedWindow.eval("window.location.href",
+                (url) => done(url))
+        })
+
+        // Send the delete request
+        delete_output.textContent = 'deleting..'
+        try {
+            const r = await braid_fetch(url, {
+                method: 'DELETE',
+                retry: true
+            })
+            if (r.ok) {
+                delete_output.textContent = 'deleted, reloading..'
+                tell_page_to_load_new_content_type()
+            } else {
+                delete_output.textContent = `Error: ${r.status}, `
+                delete_output.textContent += await r.text()
+            }
+        } catch (e) {
+            delete_output.textContent = `Error: ${e}`
+        }
+    }
 }
 
 function add_message(message) {
@@ -83,6 +157,9 @@ function add_message(message) {
         headers = message.headers
         get_failed = message.get_failed
         update()
+
+        put_output.textContent = ''
+        delete_output.textContent = ''
     } else if (message.action == 'new_version') {
         if (message.remove_count) versions.splice(versions.length - message.remove_count, message.remove_count)
         if (message.remove_version) {

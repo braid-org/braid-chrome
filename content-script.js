@@ -751,18 +751,36 @@ async function handle_subscribe() {
       set_style_good(true)
     }, on_fail)
   } else if (is_chrome_showing_media) {
-    var currentVersion = -Infinity
+    var current_event = ''
     try {
-      currentVersion = 1*JSON.parse(`[${og_headers['version']}]`)[0]
+      current_event = JSON.parse(`[${og_headers['version']}]`)[0]
     } catch (e) {}
 
     response.subscribe(update => {
-      var new_version = 1*update.version[0]
-      if (new_version > currentVersion) {
-        currentVersion = new_version
+      if (compare_events(update.version[0], current_event) > 0) {
+        current_event = update.version[0]
         location.reload()
       }
     })
+
+    function compare_events(a, b) {
+        var a_num = get_event_seq(a)
+        var b_num = get_event_seq(b)
+
+        var c = a_num.length - b_num.length
+        if (c) return c
+
+        var c = a_num.localeCompare(b_num)
+        if (c) return c
+
+        return a.localeCompare(b)
+    }
+
+    function get_event_seq(e) {
+        for (let i = e.length - 1; i >= 0; i--)
+            if (e[i] === '-') return e.slice(i + 1)
+        return e
+    }    
   }
 }
 

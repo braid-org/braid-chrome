@@ -618,6 +618,37 @@ async function handle_subscribe() {
         if (!outstanding_changes.size) textarea.style.caretColor = ''
       }
     }
+  } else if (merge_type === 'lww') {
+    var current_event = ''
+    try {
+      current_event = JSON.parse(`[${og_headers['version']}]`)[0]
+    } catch (e) {}
+
+    response.subscribe(update => {
+      if (compare_events(update.version[0], current_event) > 0) {
+        current_event = update.version[0]
+        location.reload()
+      }
+    })
+
+    function compare_events(a, b) {
+        var a_num = get_event_seq(a)
+        var b_num = get_event_seq(b)
+
+        var c = a_num.length - b_num.length
+        if (c) return c
+
+        var c = a_num.localeCompare(b_num)
+        if (c) return c
+
+        return a.localeCompare(b)
+    }
+
+    function get_event_seq(e) {
+        for (let i = e.length - 1; i >= 0; i--)
+            if (e[i] === '-') return e.slice(i + 1)
+        return e
+    }
   } else if (merge_type) {
     throw 'unsupported merge-type: ' + merge_type
   } else if (content_type == 'application/json') {
@@ -750,37 +781,6 @@ async function handle_subscribe() {
       textarea.value = JSON.stringify(doc)
       set_style_good(true)
     }, on_fail)
-  } else if (is_chrome_showing_media) {
-    var current_event = ''
-    try {
-      current_event = JSON.parse(`[${og_headers['version']}]`)[0]
-    } catch (e) {}
-
-    response.subscribe(update => {
-      if (compare_events(update.version[0], current_event) > 0) {
-        current_event = update.version[0]
-        location.reload()
-      }
-    })
-
-    function compare_events(a, b) {
-        var a_num = get_event_seq(a)
-        var b_num = get_event_seq(b)
-
-        var c = a_num.length - b_num.length
-        if (c) return c
-
-        var c = a_num.localeCompare(b_num)
-        if (c) return c
-
-        return a.localeCompare(b)
-    }
-
-    function get_event_seq(e) {
-        for (let i = e.length - 1; i >= 0; i--)
-            if (e[i] === '-') return e.slice(i + 1)
-        return e
-    }    
   }
 }
 

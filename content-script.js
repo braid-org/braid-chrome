@@ -618,7 +618,7 @@ async function handle_subscribe() {
         if (!outstanding_changes.size) textarea.style.caretColor = ''
       }
     }
-  } else if (merge_type === 'lww') {
+  } else if (merge_type === 'aww') {
     var current_event = ''
     try {
       current_event = JSON.parse(`[${og_headers['version']}]`)[0]
@@ -632,22 +632,33 @@ async function handle_subscribe() {
     })
 
     function compare_events(a, b) {
-        var a_num = get_event_seq(a)
-        var b_num = get_event_seq(b)
+        if (!a) a = ''
+        if (!b) b = ''
 
-        var c = a_num.length - b_num.length
+        var c = compare_seqs(get_event_seq(a), get_event_seq(b))
         if (c) return c
 
-        var c = a_num.localeCompare(b_num)
-        if (c) return c
-
-        return a.localeCompare(b)
+        if (a < b) return -1
+        if (a > b) return 1
+        return 0
     }
 
     function get_event_seq(e) {
+        if (!e) return ''
+
         for (let i = e.length - 1; i >= 0; i--)
             if (e[i] === '-') return e.slice(i + 1)
         return e
+    }
+
+    function compare_seqs(a, b) {
+        if (!a) a = ''
+        if (!b) b = ''
+
+        if (a.length !== b.length) return a.length - b.length
+        if (a < b) return -1
+        if (a > b) return 1
+        return 0
     }
   } else if (merge_type) {
     throw 'unsupported merge-type: ' + merge_type

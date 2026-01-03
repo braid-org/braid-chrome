@@ -110,11 +110,14 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
       document.body.firstElementChild.firstElementChild?.src === location.href)
 
     // if chrome is displaying the resource as an image, video or audio,
-    // make it a drop target, and show a delete icon
-    if (is_chrome_showing_media) {
-      setupDragAndDrop()
+    // show a delete icon
+    if (is_chrome_showing_media)
       addDeleteIcon()
-    }
+
+    // if it is displaying the resource as non-html, or it is a 404,
+    // make it a drop target
+    if (!content_type?.includes('html') || headers[':status'] === 404)
+      setupDragAndDrop()
 
     if (version || parents) handle_specific_version()
     else if (subscribe) handle_subscribe()
@@ -192,6 +195,12 @@ async function handle_subscribe() {
     send_dev_message({ action: "get_failed", get_failed: '' + e })
   }
 
+  var og_headers = headers
+
+  // for blobs, let's not load the blob twice unnecessarily
+  if (merge_type === 'aww')
+    get_parents = () => og_headers.version && JSON.parse(`[${og_headers.version}]`)
+
   try {
     response = await braid_fetch_wrapper(window.location.href, {
       version: null,
@@ -212,7 +221,6 @@ async function handle_subscribe() {
     return
   }
 
-  var og_headers = headers
   headers = {}
   for (let x of response.headers.entries()) headers[x[0].toLowerCase()] = x[1]
   send_dev_message({ action: "new_headers", headers })
@@ -797,10 +805,17 @@ async function handle_subscribe() {
 
 function addDeleteIcon() {
   var d = document.createElement('div')
-  d.style.cssText = 'position: fixed; top: 0; right: 0; background: rgba(255, 255, 255, 0.0); z-index: 0; align-items: center; justify-content: center; display: flex; width: 25px; height: 25px; padding: 5px;'
-  
+  d.style.cssText = 'position: fixed; top: 0; right: 0; background: rgba(255, 255, 255, 0.0); z-index: 9999; align-items: center; justify-content: center; display: flex; width: 25px; height: 25px; padding: 5px; opacity: 0; transition: opacity 0.2s;'
+
   // https://www.reshot.com/free-svg-icons/item/trash-ZP5J3CWHL6/
   d.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" style="width: 100%; height: 100%; fill: rgb(255,255,255,0.5); cursor: pointer"><path d="M22 5a1 1 0 0 1-1 1H3a1 1 0 0 1 0-2h5V3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v1h5a1 1 0 0 1 1 1zM4.934 21.071 4 8h16l-.934 13.071a1 1 0 0 1-1 .929H5.931a1 1 0 0 1-.997-.929zM15 18a1 1 0 0 0 2 0v-6a1 1 0 0 0-2 0zm-4 0a1 1 0 0 0 2 0v-6a1 1 0 0 0-2 0zm-4 0a1 1 0 0 0 2 0v-6a1 1 0 0 0-2 0z"/></svg>'
+
+  // Show/hide on mouse enter/leave the page
+  document.addEventListener('mouseenter', () => d.style.opacity = '1')
+  document.addEventListener('mouseleave', () => d.style.opacity = '0')
+
+  // Check if mouse is already over the page on load
+  if (document.body.matches(':hover')) d.style.opacity = '1'
 
   d.onclick = async () => {
     if (!confirm(`Are you sure you want to DELETE this resource from the server?`)) return

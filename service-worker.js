@@ -31,7 +31,10 @@ chrome.webRequest.onSendHeaders.addListener(
 chrome.webRequest.onHeadersReceived.addListener(
   details => {
     console.log('%cHeaders received!', 'background: #ff8', details)
-    latest_headers_for_tab[details.tabId] = Object.fromEntries(details.responseHeaders.map(x => [x.name.toLowerCase(), x.value]))
+    latest_headers_for_tab[details.tabId] = {
+      ...Object.fromEntries(details.responseHeaders.map(x => [x.name.toLowerCase(), x.value])),
+      ':status': details.statusCode
+    }
   },
   { urls: ["<all_urls>"], types: ["main_frame"] },
   ["responseHeaders"]

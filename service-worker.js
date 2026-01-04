@@ -12,7 +12,8 @@ chrome.tabs.onUpdated.addListener(function callback(tabid, info, tab) {
       request_headers: latest_request_headers_for_tab[tabid],
       headers: latest_headers_for_tab[tabid],
       dev_message: tab_to_last_dev_message[tabid],
-      url: tab.url
+      url: tab.url,
+      panel_open: !!tab_to_dev[tabid]
     })
   }
 })
@@ -49,6 +50,7 @@ chrome.runtime.onConnect.addListener((port) => {
       if (message.cmd == 'init') {
         tab_id = message.tab_id
         tab_to_dev[tab_id] = port
+        chrome.tabs.sendMessage(tab_id, { cmd: 'panel_opened' })
       }
       if (message.cmd == 'reload') tab_to_last_dev_message[tab_id] = message
       if (message.cmd == 'edit_source') {
@@ -60,6 +62,7 @@ chrome.runtime.onConnect.addListener((port) => {
     });
     port.onDisconnect.addListener(() => {
       delete tab_to_dev[tab_id]
+      chrome.tabs.sendMessage(tab_id, { cmd: 'panel_closed' })
     })
   }
 })

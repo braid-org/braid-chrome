@@ -644,33 +644,43 @@ async function handle_subscribe() {
       }
     })
 
+    // from braid-blob index.js or client.js
     function compare_events(a, b) {
         if (!a) a = ''
         if (!b) b = ''
 
-        var c = compare_seqs(get_event_seq(a), get_event_seq(b))
-        if (c) return c
+        // Check if values match wallclockish format
+        var re = compare_events.re || (compare_events.re = /^-?[0-9]*\.[0-9]*$/)
+        var a_match = re.test(a)
+        var b_match = re.test(b)
 
-        if (a < b) return -1
-        if (a > b) return 1
-        return 0
-    }
+        // If only one matches, it wins
+        if (a_match && !b_match) return 1
+        if (b_match && !a_match) return -1
 
-    function get_event_seq(e) {
-        if (!e) return ''
+        // If neither matches, compare lexicographically
+        if (!a_match && !b_match) {
+            if (a < b) return -1
+            if (a > b) return 1
+            return 0
+        }
 
-        for (let i = e.length - 1; i >= 0; i--)
-            if (e[i] === '-') return e.slice(i + 1)
-        return e
-    }
+        // Both match - compare as decimals using BigInt
+        // Add decimal point if missing
+        if (a.indexOf('.') === -1) a += '.'
+        if (b.indexOf('.') === -1) b += '.'
 
-    function compare_seqs(a, b) {
-        if (!a) a = ''
-        if (!b) b = ''
+        // Pad the shorter fractional part with zeros
+        var diff = (a.length - a.indexOf('.')) - (b.length - b.indexOf('.'))
+        if (diff < 0) a += '0'.repeat(-diff)
+        else if (diff > 0) b += '0'.repeat(diff)
 
-        if (a.length !== b.length) return a.length - b.length
-        if (a < b) return -1
-        if (a > b) return 1
+        // Remove decimal and parse as BigInt
+        var a_big = BigInt(a.replace('.', ''))
+        var b_big = BigInt(b.replace('.', ''))
+
+        if (a_big < b_big) return -1
+        if (a_big > b_big) return 1
         return 0
     }
   } else if (merge_type) {

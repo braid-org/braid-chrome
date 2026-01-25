@@ -505,22 +505,29 @@ async function handle_subscribe() {
       } catch (e) {
         errorify(e)
       }
-      let sel = [textarea.selectionStart, textarea.selectionEnd];
 
-      if (textarea.value != last_text) {
-        errorify("textarea out of sync somehow!")
-      }
-
-      let [new_text, new_sel] = applyChanges(
+      // The textarea normalizes \r\n to \n and \r to \n, but last_text preserves \r's.
+      // Compare and map selection positions from textarea space to last_text space.
+      let { in_sync, sel } = compareNormalizedAndMapSel(
         textarea.value,
+        last_text,
+        [textarea.selectionStart, textarea.selectionEnd]
+      )
+      if (!in_sync) errorify("textarea out of sync somehow!")
+
+      let new_text = applyChanges(
+        last_text,
         sel,
         doc.xfSince(before_v)
-      );
+      )
 
-      textarea.value = last_text = new_text;
-      last_text_code_points = count_code_points(last_text);
-      textarea.selectionStart = new_sel[0];
-      textarea.selectionEnd = new_sel[1];
+      // Convert sel back from last_text space to textarea space
+      mapSelToNormalized(new_text, sel)
+
+      textarea.value = last_text = new_text
+      last_text_code_points = count_code_points(last_text)
+      textarea.selectionStart = sel[0]
+      textarea.selectionEnd = sel[1]
     }, on_fail)
   } else if (merge_type == 'simpleton') {
     show_editor()
@@ -550,11 +557,10 @@ async function handle_subscribe() {
       if (current_version.length === (!update.parents ? 0 : update.parents.length) && current_version.every((v, i) => v === update.parents[i])) {
         current_version = update.version
 
-        if (update.body != null) textarea.value = update.body
+        if (update.body != null) textarea.value = last_seen_state = update.body
         else if (update.patches?.[0]?.unit === 'xpath')
           applyDomDiff(main_div, update.patches)
-        else apply_patches_and_update_selection(textarea, update.patches)
-        last_seen_state = textarea.value
+        else last_seen_state = apply_patches_and_update_selection(last_seen_state, update.patches, textarea)
 
         let new_version = {
           ...update,
@@ -567,8 +573,8 @@ async function handle_subscribe() {
       }
     }, on_fail)
 
-    function produce_local_update(prev_state) {
-      var patches = get_patches_for_diff(prev_state, textarea.value)
+    function produce_local_update() {
+      var patches = get_patches_for_diff(last_seen_state, textarea.value)
       // After an edit, the DT version-type requires we increment the current version
       // (aka "char_counter") by the number of characters that have been inserted or deleted
       char_counter += count_chars_in_patches(patches)
@@ -580,7 +586,7 @@ async function handle_subscribe() {
     textarea.oninput = async e => {
       if (outstanding_changes.size >= max_outstanding_changes) return
       while (true) {
-        var { patches, version, state } = produce_local_update(last_seen_state)
+        var { patches, version, state } = produce_local_update()
         if (!patches.length) return
         version = [version]
 
@@ -953,6 +959,81 @@ async function constructHTTPRequest(url, params) {
   return httpRequest
 }
 
+// Compares a normalized string (like textarea.value where \r\n and \r become \n)
+// against an original string (which may contain \r's), and converts selection
+// positions from normalized space to original space.
+// Returns { in_sync: boolean, sel: number[] }
+function compareNormalizedAndMapSel(normalized, original, sel) {
+  sel = sel.slice(); // don't mutate input
+  let mapped = new Array(sel.length).fill(false); // track which positions have been mapped
+  let ni = 0; // normalized index
+  let oi = 0; // original index
+
+  // Helper to map any sel positions at the current ni to oi
+  function mapSelAtCurrentPos() {
+    for (let s = 0; s < sel.length; s++) {
+      if (!mapped[s] && sel[s] === ni) {
+        sel[s] = oi;
+        mapped[s] = true;
+      }
+    }
+  }
+
+  while (ni < normalized.length || oi < original.length) {
+    mapSelAtCurrentPos();
+
+    let nc = normalized[ni];
+    let oc = original[oi];
+
+    if (nc === oc) {
+      ni++;
+      oi++;
+    } else if (oc === '\r') {
+      // original has \r that was normalized away
+      if (original[oi + 1] === '\n') {
+        // \r\n in original became \n in normalized
+        // skip the \r in original, the \n will match on next iteration
+        oi++;
+      } else {
+        // standalone \r in original became \n in normalized
+        if (nc === '\n') {
+          ni++;
+          oi++;
+        } else {
+          return { in_sync: false, sel };
+        }
+      }
+    } else {
+      return { in_sync: false, sel };
+    }
+  }
+
+  // Handle sel positions at the very end
+  mapSelAtCurrentPos();
+
+  if (ni !== normalized.length || oi !== original.length) {
+    return { in_sync: false, sel };
+  }
+
+  return { in_sync: true, sel };
+}
+
+// Converts selection positions from original space (with \r's) to normalized space
+// (where \r\n becomes \n and standalone \r becomes \n).
+function mapSelToNormalized(text, sel) {
+  for (let s = 0; s < sel.length; s++) {
+    let removed_count = 0;
+    for (let i = 0; i < sel[s] && i < text.length; i++) {
+      if (text[i] === '\r' && text[i + 1] === '\n') {
+        // \r\n becomes \n, so \r is removed
+        removed_count++;
+      }
+      // standalone \r becomes \n, no position change
+    }
+    sel[s] -= removed_count;
+  }
+}
+
 function applyChanges(original, sel, changes) {
   for (var change of changes) {
     let start = codePoints_to_index(original, change.start)
@@ -987,7 +1068,7 @@ function applyChanges(original, sel, changes) {
         errorify(`Unsupported change kind: ${change.kind}`)
     }
   }
-  return [original, sel];
+  return original
 }
 
 // Diffing and Patching Utilities
@@ -1019,7 +1100,7 @@ function get_patches_for_diff(before, after) {
   return patches
 }
 
-function apply_patches_and_update_selection(textarea, patches) {
+function apply_patches_and_update_selection(text, patches, textarea) {
   patches = patches.map(p => ({ ...p, range: p.range.match(/\d+/g).map((x) => 1 * x) })).sort((a, b) => a.range[0] - b.range[0])
 
   // convert from code-points to js-indicies
@@ -1027,14 +1108,14 @@ function apply_patches_and_update_selection(textarea, patches) {
   let i = 0;
   for (let p of patches) {
     while (c < p.range[0]) {
-      const charCode = textarea.value.charCodeAt(i)
+      const charCode = text.charCodeAt(i)
       i += (charCode >= 0xd800 && charCode <= 0xdbff) ? 2 : 1
       c++
     }
     p.range[0] = i
 
     while (c < p.range[1]) {
-      const charCode = textarea.value.charCodeAt(i)
+      const charCode = text.charCodeAt(i)
       i += (charCode >= 0xd800 && charCode <= 0xdbff) ? 2 : 1
       c++
     }
@@ -1050,8 +1131,14 @@ function apply_patches_and_update_selection(textarea, patches) {
     offset += p.content.length
   }
 
-  let original = textarea.value
-  let sel = [textarea.selectionStart, textarea.selectionEnd]  // Current cursor & selection
+  // The textarea normalizes \r\n to \n and \r to \n, but last_text preserves \r's.
+  // Compare and map selection positions from textarea space to last_text space.
+  let { in_sync, sel } = compareNormalizedAndMapSel(
+    textarea.value,
+    text,
+    [textarea.selectionStart, textarea.selectionEnd]
+  )
+  if (!in_sync) throw new Error("textarea out of sync somehow!")
 
   for (var p of patches) {
     let range = p.range
@@ -1072,12 +1159,17 @@ function apply_patches_and_update_selection(textarea, patches) {
     }
 
     // Update the text with the new value
-    original = original.substring(0, range[0]) + p.content + original.substring(range[1])
+    text = text.substring(0, range[0]) + p.content + text.substring(range[1])
   }
 
-  textarea.value = original
+  // Convert sel back from text space to textarea space
+  mapSelToNormalized(text, sel)
+
+  textarea.value = text
   textarea.selectionStart = sel[0]
   textarea.selectionEnd = sel[1]
+
+  return text
 }
 
 async function braid_fetch_wrapper(url, params) {

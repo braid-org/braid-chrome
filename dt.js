@@ -1565,7 +1565,7 @@ function encode_version(agent, seq) {
 }
 
 function decode_version(v) {
-    let a = v.split('-')
-    if (a.length > 1) a[1] = parseInt(a[1])
-    return a
+    let m = v.match(/^(.*)-(\d+)$/s)
+    if (!m) throw new Error(`invalid actor-seq version: ${v}`)
+    return [m[1], parseInt(m[2])]
 }

@@ -257,72 +257,96 @@ function raw_update() {
         }
         id_messages.append(make_html(`<div style="width:10px;height:10px"></div>`))
 
-        let v_to_realv = {}
         let version_ys = {}
+        let v_to_multiv = {}
+        let actor_to_seqs = {}
 
         let py = svg_parent?.getBoundingClientRect() || 0
         if (py) py = py.y + py.height / 2
 
-        let actor_to_seq = {}
-        for (let v of versions) {
-            let v_string = '' + v.version
+        function get_real_event(e) {
+            try {
+                let [actor, seq] = decode_version(e)
+                let seqs = actor_to_seqs[actor]
+                if (!seqs?.length) return
+                let lo = 0, hi = seqs.length
+                while (lo < hi) {
+                    let mid = Math.floor((lo + hi) / 2)
+                    if (seqs[mid] < seq) lo = mid + 1
+                    else hi = mid
+                }
+                if (lo < seqs.length)
+                    return actor + '-' + seqs[lo]
+            } catch (e) {}
+        }
 
-            let rect = version_circles[v_string].getBoundingClientRect()
-            let y = (rect.y + rect.height / 2) - py
-
-            version_ys[v_string] = y
-
-            v_to_realv[v_string] = v_string
-
-            if (v_string == '') continue;
-
-            let [actor, seq] = v_string.split('-')
-            seq = 1 * seq
-            for (let i = actor_to_seq[actor] ?? 0; i < seq; i++) {
-                v_to_realv[actor + '-' + i] = v_string
+        function get_real_parents(parents) {
+            if (!parents?.length) return {'': true}
+            let real_parents = {}
+            for (let p of parents) {
+                let real_p = get_real_event(p)
+                if (!real_p) continue
+                let unchanged = real_p === p
+                real_p = v_to_multiv[real_p]
+                if (!real_p) continue
+                real_parents[real_p] = unchanged
             }
-            actor_to_seq[actor] = seq + 1
+            return real_parents
         }
 
         let last_x = 0.5
         let last_x_shadow_r = 0.25
         let version_xs = {}
-        let last_v = null
+        let last_v = ''
 
-        for (let v of versions) {
+        for (let i = 0; i < versions.length; i++) {
+            let v = versions[i]
             let v_string = '' + v.version
 
             let actor = v_string.split('-')[0]
             let color = actor_to_color[actor]
 
+            let real_parents = get_real_parents(v.parents)
+            let real_parents_array = Object.keys(real_parents)
+
             let x = null
-            if (!v.parents || v.parents.length == 0 || v_to_realv['' + v.parents] == last_v) {
+            if (real_parents_array.length === 1 &&
+                real_parents_array[0] === last_v) {
                 x = last_x
             } else {
-                let r = parseInt(v_string[0], 36) / 35
+                let r = fastHashToUnit(v_string)
                 x = last_x + last_x_shadow_r + r * (1 - 2 * last_x_shadow_r)
                 if (x > 1) x -= 1
             }
-            version_xs[v_string] = x
+            last_v = v_string
+            version_xs[v_string] = last_x = x
 
-            let y = version_ys[v_string]
+            let rect = version_circles[v_string].getBoundingClientRect()
+            let y = (rect.y + rect.height / 2) - py
+            version_ys[v_string] = y
 
-            let ps = v.parents ?? []
-            if (ps.length == 0) ps = ['']
-            if (ps.length > 1 && v_to_realv['' + v.parents]) ps = ['' + v.parents]
-            for (let p of ps) {
-                let pointing_to_subversion = v_to_realv[p] != p
-                p = v_to_realv[p]
-                if (p == null) continue
-                let h = y - version_ys[p]
-                let px = version_xs[p]
+            if (i) {
+                for (let [p, unchanged] of Object.entries(real_parents)) {
+                    let pointing_to_subversion = !unchanged
+                    let h = y - version_ys[p]
+                    let px = version_xs[p]
 
-                svg_parent.append(make_html(`<svg height="${h}px" width="${time_dag_width}px" style="pointer-events:none; position: absolute; top: ${y - h + time_dag_radius}px; left: 0px;">
-                        <line x1="${time_dag_radius + x * (time_dag_width - 2 * time_dag_radius)}px" y1="100%" x2="${time_dag_radius + px * (time_dag_width - 2 * time_dag_radius)}px" y2="0%" stroke="${color}" stroke-width="1px" ${pointing_to_subversion ? 'stroke-dasharray="3,3"' : ''} />
-                </svg>`))
+                    svg_parent.append(make_html(`<svg height="${h}px" width="${time_dag_width}px" style="pointer-events:none; position: absolute; top: ${y - h + time_dag_radius}px; left: 0px;">
+                            <line x1="${time_dag_radius + x * (time_dag_width - 2 * time_dag_radius)}px" y1="100%" x2="${time_dag_radius + px * (time_dag_width - 2 * time_dag_radius)}px" y2="0%" stroke="${color}" stroke-width="1px" ${pointing_to_subversion ? 'stroke-dasharray="3,3"' : ''} />
+                    </svg>`))
+                }
             }
 
-            last_v = v_string
+            if (v.version !== 'final merge') {
+                for (let e of v.version) {
+                    v_to_multiv[e] = v_string
+                    try {
+                        let [actor, seq] = decode_version(e)
+                        if (!actor_to_seqs[actor]) actor_to_seqs[actor] = []
+                        sorted_insert(actor_to_seqs[actor], seq)
+                    } catch (err) {}
+                }
+            }
         }
 
         for (let v of versions) {
@@ -331,23 +355,12 @@ function raw_update() {
             let actor = v_string.split('-')[0]
             let color = actor_to_color[actor]
 
-            let x = null
-            if (!v.parents || v.parents.length == 0 || v_to_realv['' + v.parents] == last_v) {
-                x = last_x
-            } else {
-                let r = parseInt(v_string[0], 36) / 35
-                x = last_x + last_x_shadow_r + r * (1 - 2 * last_x_shadow_r)
-                if (x > 1) x -= 1
-            }
-            version_xs[v_string] = x
-
+            let x = version_xs[v_string]
             let y = version_ys[v_string]
 
             svg_parent.append(make_html(`<svg height="${time_dag_radius * 2}px" width="${time_dag_radius * 2}px" style="position: absolute; top: ${y}px; left: ${x * (time_dag_width - 2 * time_dag_radius)}px;">
                     <circle cx="50%" cy="50%" r="50%" stroke-width="0" fill="${color}" />
             </svg>`))
-
-            last_v = v_string
         }
 
         if (versions[versions.length - 1].version === 'final merge') versions.pop()
@@ -434,6 +447,31 @@ function angle_to_color_raw(angle) {
         255 * (n + e * (Zn * r + Qn * i)),
         255 * (n + e * (Kn * r)),
     ];
+}
+
+function decode_version(v) {
+    let m = v.match(/^(.*)-(\d+)$/s)
+    if (!m) throw new Error(`invalid actor-seq version: ${v}`)
+    return [m[1], parseInt(m[2])]
+}
+
+function sorted_insert(arr, val) {
+    let lo = 0, hi = arr.length
+    while (lo < hi) {
+        let mid = Math.floor((lo + hi) / 2)
+        if (arr[mid] < val) lo = mid + 1
+        else hi = mid
+    }
+    arr.splice(lo, 0, val)
+}
+
+function fastHashToUnit(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+    hash = (hash << 5) - hash + str.charCodeAt(i);
+    hash |= 0;
+    }
+    return (hash >>> 0) / 4294967296; // divide by 2^32 → [0, 1)
 }
 
 // POST undefined HTTP/1.1

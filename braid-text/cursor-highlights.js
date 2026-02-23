@@ -277,6 +277,9 @@ function cursor_highlights(textarea, url) {
     })
 
     return {
+        online: function() { if (client) client.online() },
+        offline: function() { if (client) client.offline() },
+
         on_patches: function(patches) {
             applying_remote = true
             if (client) client.changed(patches)

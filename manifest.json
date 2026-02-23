@@ -61,7 +61,9 @@
         "./dt.js",
         "./myers-diff1.js",
         "./braid-http-client.js",
-        "./apply-patch.js"
+        "./apply-patch.js",
+        "./braid-text/cursor-highlights.js",
+        "./braid-text/cursor-sync.js"
       ],
       // run_at can be document_start, document_end, or document_idle (default)
       "run_at": "document_start"

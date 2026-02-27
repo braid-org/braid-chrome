@@ -559,6 +559,7 @@ async function handle_subscribe() {
         on_subscription_status = ({online}) => {
             online ? cursor_sync.online() : cursor_sync.offline()
         }
+        if (window.subscription_online) cursor_sync.online()
         document.addEventListener('selectionchange', function() {
             if (applying_remote) return
             if (document.activeElement !== textarea) return

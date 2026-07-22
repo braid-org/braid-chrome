@@ -14,6 +14,11 @@
         padding: 0;
         font-size: 11px;
     }
+    /* Long unbreakable values (e.g. version strings) must wrap within their
+       90px column, or they widen the metadata panel into a scrollbar */
+    #newmeta span {
+        overflow-wrap: anywhere;
+    }
   </style>
   <body
     style="

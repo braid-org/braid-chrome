@@ -33,6 +33,8 @@ function connect() {
 
         last_version = version_request.value
         last_parents = parents_request.value
+        get_failed = ''
+        update()
         update_show_resubmit()
     }
 
@@ -132,8 +134,9 @@ function raw_update() {
     })) {
         window[v].textContent = headers[k] ?? ''
     }
-    window.content_type_response.textContent =
-        headers['repr-type'] ?? headers['content-type'] ?? ''
+    var full_content_type = headers['repr-type'] ?? headers['content-type'] ?? ''
+    window.content_type_response.textContent = full_content_type.split(';')[0].trim()
+    window.content_type_response.title = full_content_type
     window.subscribe_response.textContent = '' + (headers.subscribe != null)
 
     window.error_d_label.style.display = get_failed ? 'inline' : 'none'
@@ -239,14 +242,14 @@ function raw_update() {
                     for (let i = 0; i < 8; i++)
                         id_messages.append(make_html(`<div style="width:10px;height:10px"></div>`))
 
-                id_messages.append(my_make_html(`<div><div style="color:black;background:rgb(245,245,245);font-family:monospace;padding-right:10px">${patch.unit}</div></div>`))
+                id_messages.append(my_make_html(`<div style="padding-right:10px"><div style="display:inline-block;color:black;background:rgb(245,245,245);font-family:monospace;padding:2px 4px;border-radius:3px">${patch.unit}</div></div>`))
                 id_messages.append(my_make_html(`<div style="font-family:monospace;padding-right:10px">${patch.unit == 'text' ? patch.range.slice(1, -1) : patch.range}</div>`))
 
                 id_messages.append(my_make_html(`<div style="padding-right:10px">=</div>`))
 
                 let container = my_make_html(`<div style="padding-right:10px"></div>`)
                 if (patch.content) {
-                    let pre = make_html(`<pre style="padding:0px;margin:0px;color:black;background:rgb(245,245,245);font-family:monospace;text-wrap:wrap;"></pre>`)
+                    let pre = make_html(`<pre style="padding:3px 4px;margin:0px;color:black;background:rgb(245,245,245);font-family:monospace;text-wrap:wrap;border-radius:3px"></pre>`)
                     pre.textContent = patch.content
                     container.append(pre)
                 } else {

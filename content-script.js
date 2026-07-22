@@ -153,6 +153,7 @@ async function handle_specific_version() {
 
     textarea.textContent = await response.text()
   } catch (e) {
+    if (abort_controller.signal.aborted) return
     console.log('braid_fetch_wrapper failed: ' + e)
     get_failed = '' + e
     send_dev_message({ action: "get_failed", get_failed })
@@ -187,6 +188,9 @@ async function handle_subscribe() {
   let diff_d = main_div.querySelector(`.${uniquePrefix}_diff_d`)
   online = main_div.querySelector(`.${uniquePrefix}_online`)
   textarea = main_div.querySelector(`.${uniquePrefix}_textarea`)
+  // show_editor() replaces the original page with our editor.  We defer
+  // calling it until the first subscription update arrives, so that the
+  // original page stays visible rather than flashing blank while we wait.
   show_editor = () => {
     document.body.innerHTML = ''
     document.body.style.background = 'none'
@@ -195,11 +199,22 @@ async function handle_subscribe() {
   }
 
   let on_fail = e => {
+    // We abort on purpose when devtools asks for a reload — that's not a
+    // failure, so don't paint the error UI
+    if (abort_controller.signal.aborted) return
     console.log(e?.stack || e)
     textarea.style.border = '4px red solid'
     textarea.style.background = '#fee'
     textarea.disabled = true
     send_dev_message({ action: "get_failed", get_failed: '' + e })
+  }
+
+  // We defer show_editor() until the first update arrives, so a subscription
+  // that dies before then needs to show the editor for its error to be seen
+  var on_subscribe_fail = e => {
+    if (abort_controller.signal.aborted) return
+    show_editor()
+    on_fail(e)
   }
 
   var og_headers = headers
@@ -224,6 +239,7 @@ async function handle_subscribe() {
       }
     })
   } catch (e) {
+    if (abort_controller.signal.aborted) return
     console.log('braid_fetch_wrapper failed: ' + e)
     get_failed = '' + e
     send_dev_message({ action: "get_failed", get_failed })
@@ -250,8 +266,6 @@ async function handle_subscribe() {
   }
 
   if (merge_type === 'dt') {
-    show_editor()
-
     let wasmModuleBuffer = await (await fetch(chrome.runtime.getURL('dt_bg.wasm'))).arrayBuffer();
     const imports = __wbg_get_imports();
     __wbg_init_memory(imports);
@@ -440,6 +454,7 @@ async function handle_subscribe() {
       if (patches) for (let p of patches) p.content = p.content_text
 
       if (textarea.hasAttribute("readonly")) {
+        show_editor()
         textarea.removeAttribute("readonly")
         textarea.removeAttribute('disabled')
         // textarea.focus()
@@ -534,10 +549,8 @@ async function handle_subscribe() {
       last_text_code_points = count_code_points(last_text)
       textarea.selectionStart = sel[0]
       textarea.selectionEnd = sel[1]
-    }, on_fail)
+    }, on_subscribe_fail)
   } else if (merge_type === 'simpleton') {
-    show_editor()
-
     console.log(`got simpleton..`)
 
     var hl = textarea_highlights(textarea)
@@ -583,6 +596,7 @@ async function handle_subscribe() {
       if (update.patches) for (let p of update.patches) p.content = p.content_text
 
       if (textarea.hasAttribute("readonly")) {
+        show_editor()
         textarea.removeAttribute("readonly")
         textarea.removeAttribute('disabled')
         // textarea.focus()
@@ -619,7 +633,7 @@ async function handle_subscribe() {
         versions.push(new_version)
         send_dev_message({ action: "new_version", version: new_version })
       }
-    }, on_fail)
+    }, on_subscribe_fail)
 
     function produce_local_update() {
       var patches = get_patches_for_diff(last_seen_state, textarea.value)
@@ -752,8 +766,6 @@ async function handle_subscribe() {
   } else if (merge_type) {
     throw 'unsupported merge-type: ' + merge_type
   } else if (content_type == 'application/json') {
-    show_editor()
-
     console.log(`got application/json..`)
 
     var doc = null
@@ -831,6 +843,7 @@ async function handle_subscribe() {
       if (patches) for (let p of patches) p.content = p.content_text
 
       if (textarea.hasAttribute("readonly")) {
+        show_editor()
         textarea.removeAttribute("readonly")
         textarea.removeAttribute('disabled')
       }
@@ -880,7 +893,7 @@ async function handle_subscribe() {
       }
       textarea.value = JSON.stringify(doc)
       set_style_good(true)
-    }, on_fail)
+    }, on_subscribe_fail)
   }
 }
 
@@ -928,6 +941,9 @@ function setupDragAndDrop() {
   }
 
   function highlight(e) {
+    // show_editor() wipes document.body, which destroys our overlay,
+    // so re-add it if that happened
+    if (!dragOverlay.isConnected) document.body.appendChild(dragOverlay)
     dragOverlay.style.display = 'flex'
   }
 

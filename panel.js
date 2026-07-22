@@ -125,7 +125,6 @@ function raw_update() {
     let was_scrolled_to_bottom = isScrolledToBottom(id_messages)
 
     for (let [k, v] of Object.entries({
-        'content-type': 'content_type_response',
         'subscribe': 'subscribe_response',
         'version': 'version_response',
         'parents': 'parents_response',
@@ -133,12 +132,14 @@ function raw_update() {
     })) {
         window[v].textContent = headers[k] ?? ''
     }
+    window.content_type_response.textContent =
+        headers['repr-type'] ?? headers['content-type'] ?? ''
     window.subscribe_response.textContent = '' + (headers.subscribe != null)
 
     window.error_d_label.style.display = get_failed ? 'inline' : 'none'
     window.error_d.textContent = get_failed
 
-    edit_source_d.style.display = headers['content-type']?.startsWith('text/html') ? 'flex' : 'none'
+    edit_source_d.style.display = (headers['repr-type'] ?? headers['content-type'])?.startsWith('text/html') ? 'flex' : 'none'
 
     let actor_to_color = {}
     let actor_color_angles = []

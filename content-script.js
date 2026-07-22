@@ -96,6 +96,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     version = request.dev_message?.version
     parents = request.dev_message?.parents
     content_type = request.dev_message?.content_type ||
+      request.headers?.['repr-type']?.split(/[;,]/)[0] ||
       request.headers?.['content-type']?.split(/[;,]/)[0] ||
       request.request_headers?.accept?.split(/[;,]/)[0]
     merge_type = request.dev_message?.merge_type || request.headers['merge-type']
@@ -242,7 +243,7 @@ async function handle_subscribe() {
 
   if (headers['merge-type']) merge_type = headers['merge-type']
 
-  if (headers['content-type']?.split(/[;,]/)[0] === 'text/html' && !edit_source) {
+  if ((headers['repr-type'] ?? headers['content-type'])?.split(/[;,]/)[0] === 'text/html' && !edit_source) {
     // skip first show_editor attempt
     var og_show_editor = show_editor
     show_editor = () => show_editor = og_show_editor

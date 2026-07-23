@@ -25,7 +25,11 @@ var default_version_count = 1
 var on_show_diff = () => { }
 var get_parents = () => null
 
-var abort_controller = new AbortController();
+var current_sync = null
+
+// The navigation's defaults, for rerequests that don't specify these
+var nav_content_type = null
+var nav_merge_type = null
 
 var is_chrome_showing_media = false
 
@@ -46,10 +50,26 @@ function send_dev_message(m) {
 }
 
 function on_bytes_received(s) {
-  s = (new TextDecoder()).decode(s)
-  // console.log(`on_bytes_received[${s.slice(0, 500)}]`)
+  record_raw((new TextDecoder()).decode(s))
+}
+
+function record_raw(s) {
   raw_messages.push(s)
   send_dev_message({ action: "braid_in", data: s })
+}
+
+// Mirror a response's headers to the devtools, and reconstruct its status
+// line and headers for the raw view, since braid_fetch doesn't deliver
+// those as bytes
+function record_response(response) {
+  headers = {}
+  for (let x of response.headers.entries()) headers[x[0].toLowerCase()] = x[1]
+  send_dev_message({ action: "new_headers", headers })
+
+  var status_text = {200: 'OK', 209: 'Multiresponse'}[response.status] ?? ''
+  record_raw(`HTTP/1.1 ${response.status} ${status_text}\r\n`
+             + Object.entries(headers).map(([k, v]) => `${k}: ${v}\r\n`).join('')
+             + '\r\n')
 }
 
 function on_bytes_going_out(url, params) {
@@ -76,7 +96,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
   // console.log(`getting message with cmd: ${request.cmd}`)
   let reload = () => {
     console.log('reloading!')
-    abort_controller.abort()
+    disconnect()
     location.reload()
   }
   if (request.cmd == 'init') {
@@ -90,23 +110,21 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
   } else if (request.cmd == "edit_source") {
     edit_source = true
     show_editor()
-  } else if (request.cmd == "reload") {
-    reload()
+  } else if (request.cmd == "rerequest") {
+    // Going back to Chrome's native rendering needs a real page reload
+    if (request.subscribe === false && !request.version && !request.parents)
+      reload()
+    else
+      connect(request)
   } else if (request.cmd == 'loaded') {
-    version = request.dev_message?.version
-    parents = request.dev_message?.parents
-    content_type = request.dev_message?.content_type ||
+    nav_content_type =
       request.headers?.['repr-type']?.split(/[;,]/)[0] ||
       request.headers?.['content-type']?.split(/[;,]/)[0] ||
       request.request_headers?.accept?.split(/[;,]/)[0]
-    merge_type = request.dev_message?.merge_type || request.headers['merge-type']
-    subscribe = !(request.dev_message?.subscribe === false)
-    edit_source = request.dev_message?.edit_source
+    nav_merge_type = request.headers['merge-type']
 
     headers = {}
     for (let x of Object.entries(request.headers)) headers[x[0]] = x[1]
-
-    send_dev_message({ action: "init", headers, versions, raw_messages, get_failed })
 
     is_chrome_showing_media = 
       // showing an image..
@@ -121,17 +139,55 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     if (is_chrome_showing_media)
       addDeleteIcon(request.panel_open)
 
+    connect(request.dev_message ?? {})
+
     // if it is displaying the resource as non-html, or it is a 404,
     // make it a drop target
     if (!content_type?.includes('html') || headers[':status'] === 404)
       setupDragAndDrop()
-
-    if (version || parents) handle_specific_version()
-    else if (subscribe) handle_subscribe()
   }
 })
 
+// A sync is one live connection to this page's resource, under one set of
+// request params. Rerequesting stops the current sync and starts a new one;
+// the old editor stays visible until the new sync's first update swaps it in.
+function connect(params) {
+  disconnect()
+  current_sync = { aborter: new AbortController(), cleanups: [] }
+
+  version = params.version
+  parents = params.parents
+  content_type = params.content_type || nav_content_type
+  merge_type = params.merge_type || nav_merge_type
+  subscribe = !(params.subscribe === false)
+  edit_source = params.edit_source
+
+  window.subscription_online = false
+  on_subscription_status = null
+  get_parents = () => null
+  on_show_diff = () => { }
+
+  // The old sync's history is replaced along with it. Its headers stay
+  // shown until the new response arrives, like the editor's content does
+  versions = []
+  raw_messages = []
+  get_failed = ''
+  send_dev_message({ action: "init", versions, raw_messages, get_failed })
+
+  if (version || parents) handle_specific_version()
+  else if (subscribe) handle_subscribe()
+}
+
+function disconnect() {
+  if (!current_sync) return
+  current_sync.dead = true
+  current_sync.aborter.abort()
+  for (var f of current_sync.cleanups) try { f() } catch (e) { }
+  current_sync = null
+}
+
 async function handle_specific_version() {
+  var abort_controller = current_sync.aborter
   window.stop()
   document.body.innerHTML = '<textarea disabled style="position: fixed; left: 0px; top: 0px; right: 0px; bottom: 0px; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box; background: transparent;"></textarea>'
   document.body.style.background = 'none'
@@ -147,9 +203,7 @@ async function handle_specific_version() {
       retry: true
     })
 
-    headers = {}
-    for (let x of response.headers.entries()) headers[x[0].toLowerCase()] = x[1]
-    send_dev_message({ action: "new_headers", headers })
+    record_response(response)
 
     textarea.textContent = await response.text()
   } catch (e) {
@@ -166,6 +220,8 @@ async function handle_specific_version() {
 }
 
 async function handle_subscribe() {
+  var sync = current_sync
+  var abort_controller = sync.aborter
   let uniquePrefix = '_' + Math.random().toString(36).slice(2)
   let main_div = make_html(`<div
           style="position: fixed; left: 0px; top: 0px; right: 0px; bottom: 0px; box-sizing: border-box;"
@@ -248,18 +304,22 @@ async function handle_subscribe() {
     return
   }
 
-  headers = {}
-  for (let x of response.headers.entries()) headers[x[0].toLowerCase()] = x[1]
-  send_dev_message({ action: "new_headers", headers })
+  record_response(response)
 
-  if (headers.subscribe !== 'true') {
+  if (headers.subscribe !== '?1' && headers.subscribe !== 'true') {
     abort_controller.abort()
     return
   }
 
   if (headers['merge-type']) merge_type = headers['merge-type']
 
-  if ((headers['repr-type'] ?? headers['content-type'])?.split(/[;,]/)[0] === 'text/html' && !edit_source) {
+  // application/http-history frames the subscription; it is not the repr.
+  // When the response doesn't name a repr, fall back to the type we asked for
+  var repr_type = headers['repr-type'] ??
+      (headers['content-type']?.startsWith('application/http-history')
+          ? content_type : headers['content-type'])
+
+  if (repr_type?.split(/[;,]/)[0] === 'text/html' && !edit_source) {
     // skip first show_editor attempt
     var og_show_editor = show_editor
     show_editor = () => show_editor = og_show_editor
@@ -280,6 +340,7 @@ async function handle_subscribe() {
     let actor_seqs = {}
 
     doc = new Doc(peer);
+    sync.cleanups.push(() => { doc?.free(); doc = null })
 
     get_parents = () => doc.getRemoteVersion().map((x) => x.join("-")).sort()
 
@@ -569,16 +630,22 @@ async function handle_subscribe() {
             hl.render()
         }
     })
+    // If we got disconnected while the cursors were connecting, take them down
+    if (cursor_sync && sync.dead) { cursor_sync.destroy(); cursor_sync = null }
     if (cursor_sync) {
+        sync.cleanups.push(() => cursor_sync.destroy())
         on_subscription_status = ({online}) => {
             online ? cursor_sync.online() : cursor_sync.offline()
         }
         if (window.subscription_online) cursor_sync.online()
-        document.addEventListener('selectionchange', function() {
+        var on_selectionchange = function() {
             if (applying_remote) return
             if (document.activeElement !== textarea) return
             cursor_sync.set(textarea.selectionStart, textarea.selectionEnd)
-        })
+        }
+        document.addEventListener('selectionchange', on_selectionchange)
+        sync.cleanups.push(() =>
+            document.removeEventListener('selectionchange', on_selectionchange))
     }
 
     var char_counter = -1   // Counts the numbers of inserts and deletes generated by this client

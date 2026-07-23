@@ -52,7 +52,7 @@ chrome.runtime.onConnect.addListener((port) => {
         tab_to_dev[tab_id] = port
         chrome.tabs.sendMessage(tab_id, { cmd: 'panel_opened' })
       }
-      if (message.cmd == 'reload') tab_to_last_dev_message[tab_id] = message
+      if (message.cmd == 'rerequest') tab_to_last_dev_message[tab_id] = message
       if (message.cmd == 'edit_source') {
         if (!tab_to_last_dev_message[tab_id]) tab_to_last_dev_message[tab_id] = {}
         tab_to_last_dev_message[tab_id].edit_source = true

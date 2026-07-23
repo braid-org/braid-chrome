@@ -28,8 +28,8 @@ function connect() {
 
     backgroundConnection.postMessage({ cmd: 'init', tab_id: chrome.devtools.inspectedWindow.tabId })
 
-    function tell_page_to_load_new_content_type() {
-        backgroundConnection.postMessage({ cmd: "reload", content_type: content_type_select.value, merge_type: merge_type_select.value, subscribe: subscribe_request.checked, ...(version_request.value ? { version: version_request.value } : {}), ...(parents_request.value ? { parents: parents_request.value } : {}), edit_source: edit_source.checked });
+    function rerequest() {
+        backgroundConnection.postMessage({ cmd: "rerequest", content_type: content_type_select.value, merge_type: merge_type_select.value, subscribe: subscribe_request.checked, ...(version_request.value ? { version: version_request.value } : {}), ...(parents_request.value ? { parents: parents_request.value } : {}), edit_source: edit_source.checked });
 
         last_version = version_request.value
         last_parents = parents_request.value
@@ -38,9 +38,9 @@ function connect() {
         update_show_resubmit()
     }
 
-    resubmit_button.onclick = tell_page_to_load_new_content_type
-    content_type_select.onchange = tell_page_to_load_new_content_type
-    merge_type_select.onchange = tell_page_to_load_new_content_type
+    resubmit_button.onclick = rerequest
+    content_type_select.onchange = rerequest
+    merge_type_select.onchange = rerequest
 
     backgroundConnection.onDisconnect.addListener(() => setTimeout(connect, 500));
 
@@ -51,7 +51,7 @@ function connect() {
             version_request.value = ''
             parents_request.value = ''
         }
-        tell_page_to_load_new_content_type()
+        rerequest()
     }
 
     version_request.oninput = update_show_resubmit
@@ -71,7 +71,7 @@ function connect() {
 
     edit_source.oninput = () => {
         if (edit_source.checked) backgroundConnection.postMessage({ cmd: "edit_source" })
-        else tell_page_to_load_new_content_type()
+        else rerequest()
     }
 
 }
@@ -83,7 +83,7 @@ function add_message(message) {
     if (message.action == 'init') {
         versions = message.versions
         raw_messages = message.raw_messages
-        headers = message.headers
+        if (message.headers) headers = message.headers
         get_failed = message.get_failed
         update()
 
@@ -132,9 +132,12 @@ function raw_update() {
         'parents': 'parents_response',
         'merge-type': 'merge_type_response',
     })) {
-        window[v].textContent = headers[k] ?? ''
+        // Version ids are quoted on the wire; display them bare
+        window[v].textContent = (headers[k] ?? '').replace(/"/g, '')
     }
     var full_content_type = headers['repr-type'] ?? headers['content-type'] ?? ''
+    // application/http-history frames the subscription; it is not the repr
+    if (full_content_type.startsWith('application/http-history')) full_content_type = ''
     window.content_type_response.textContent = full_content_type.split(';')[0].trim()
     window.content_type_response.title = full_content_type
     window.subscribe_response.textContent = '' + (headers.subscribe != null)
@@ -395,7 +398,11 @@ function raw_update() {
 }
 
 function isScrolledToBottom(element) {
-    return element.scrollHeight - element.scrollTop === element.clientHeight;
+    // An unscrollable view counts as at-the-top, not at-the-bottom
+    return element.scrollHeight > element.clientHeight
+        // Fractional scroll positions (from display scaling) never compare
+        // exactly equal, so allow a couple pixels of slop
+        && element.scrollHeight - element.scrollTop - element.clientHeight < 3;
 }
 
 function make_html(s) {
@@ -420,37 +427,10 @@ function get_new_angle(angles) {
 }
 
 function angle_to_color(angle) {
-    return `rgb(${angle_to_color_raw(angle).join(",")})`;
-}
-
-function angle_to_color_raw(angle) {
-    var t = angle;
-    if (t < 0 || t > 1) t -= Math.floor(t);
-    var n = Math.abs(t - 0.5);
-
-    var h = 360 * t - 100;
-    var s = 1.5 - 1.5 * n;
-    var l = 0.8 - 0.9 * n;
-
-    var kn = 0.017453292519943295;
-
-    t = (h + 120) * kn;
-    n = l;
-    var e = s * n * (1 - n);
-    var r = Math.cos(t);
-    var i = Math.sin(t);
-
-    var $n = -0.14861;
-    var Wn = 1.78277;
-    var Zn = -0.29227;
-    var Qn = -0.90649;
-    var Kn = 1.97294;
-
-    return [
-        255 * (n + e * ($n * r + Wn * i)),
-        255 * (n + e * (Zn * r + Qn * i)),
-        255 * (n + e * (Kn * r)),
-    ];
+    // Hue alone carries identity. Lightness and chroma stay fixed, dark
+    // and vivid enough to read as text on the white background.
+    // The offset starts the first actors at blue, then orange...
+    return `oklch(50% 0.30 ${Math.round(angle * 360 + 250)})`
 }
 
 function decode_version(v) {

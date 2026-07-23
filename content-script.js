@@ -447,7 +447,8 @@ async function handle_subscribe() {
           retry: true,
           method: "PUT",
           mode: "cors",
-          headers: { "Merge-Type": merge_type, "Content-Type": content_type },
+          headers: { "Merge-Type": merge_type },
+          repr_type: content_type,
           version: p.version,
           parents: p.parents,
           patches: [
@@ -743,7 +744,8 @@ async function handle_subscribe() {
         last_seen_state = state
 
         var ops = {
-          headers: { "Merge-Type": merge_type, "Content-Type": content_type },
+          headers: { "Merge-Type": merge_type },
+          repr_type: content_type,
           method: "PUT",
           retry: true,
           version, parents, patches,
@@ -852,7 +854,7 @@ async function handle_subscribe() {
         set_style_good(true)
 
         let new_version = {
-          headers: { "Content-Type": content_type },
+          repr_type: content_type,
           method: "PUT",
           retry: true,
           version: ['default-' + default_version_count++],

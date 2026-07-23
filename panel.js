@@ -99,13 +99,15 @@ function add_message(message) {
         }
         if (message.version) versions.push(message.version)
         if (message.override_versions) versions = message.override_versions
-        update()
+        // Only rebuild the view that shows versions. The raw view catches
+        // up when its checkbox toggles, which calls update() itself
+        if (!id_raw_messages.checked) update()
     } else if (message.action == 'new_headers') {
         headers = message.headers
         update()
     } else if (message.action == 'braid_in' || message.action == 'braid_out') {
         raw_messages.push(message.data)
-        update()
+        if (id_raw_messages.checked) update()
     } else if (message.action == 'get_failed') {
         get_failed = message.get_failed
         update()
@@ -155,6 +157,9 @@ function raw_update() {
         id_messages.style.display = 'grid'
         id_messages.style['grid-template-columns'] = 'auto auto auto auto auto 1fr'
         id_messages.style['align-content'] = 'start'
+        // The chips pad their text down a few pixels; align rows by text
+        // baseline so the padded and unpadded cells still line up
+        id_messages.style['align-items'] = 'baseline'
 
         id_messages.append(make_html(`<div style="grid-column: span 2;margin-left:10px;margin-top:10px">Version</div>`))
         id_messages.append(make_html(`<div style="grid-column: span 3;margin-top:10px">Range</div>`))
@@ -306,6 +311,10 @@ function raw_update() {
         let version_xs = {}
         let last_v = ''
 
+        // Compute all the geometry before appending any SVGs. Reading a
+        // rect right after a DOM mutation forces a reflow of the whole
+        // grid, so interleaving them was O(n²) and pegged the CPU
+        var edges = []
         for (let i = 0; i < versions.length; i++) {
             let v = versions[i]
             let v_string = '' + v.version
@@ -334,13 +343,12 @@ function raw_update() {
 
             if (i) {
                 for (let [p, unchanged] of Object.entries(real_parents)) {
-                    let pointing_to_subversion = !unchanged
-                    let h = y - version_ys[p]
-                    let px = version_xs[p]
-
-                    svg_parent.append(make_html(`<svg height="${h}px" width="${time_dag_width}px" style="pointer-events:none; position: absolute; top: ${y - h + time_dag_radius}px; left: 0px;">
-                            <line x1="${time_dag_radius + x * (time_dag_width - 2 * time_dag_radius)}px" y1="100%" x2="${time_dag_radius + px * (time_dag_width - 2 * time_dag_radius)}px" y2="0%" stroke="${color}" stroke-width="1px" ${pointing_to_subversion ? 'stroke-dasharray="3,3"' : ''} />
-                    </svg>`))
+                    edges.push({
+                        x, y, color,
+                        px: version_xs[p],
+                        h: y - version_ys[p],
+                        dashed: !unchanged
+                    })
                 }
             }
 
@@ -354,6 +362,12 @@ function raw_update() {
                     } catch (err) {}
                 }
             }
+        }
+
+        for (var e of edges) {
+            svg_parent.append(make_html(`<svg height="${e.h}px" width="${time_dag_width}px" style="pointer-events:none; position: absolute; top: ${e.y - e.h + time_dag_radius}px; left: 0px;">
+                    <line x1="${time_dag_radius + e.x * (time_dag_width - 2 * time_dag_radius)}px" y1="100%" x2="${time_dag_radius + e.px * (time_dag_width - 2 * time_dag_radius)}px" y2="0%" stroke="${e.color}" stroke-width="1px" ${e.dashed ? 'stroke-dasharray="3,3"' : ''} />
+            </svg>`))
         }
 
         for (let v of versions) {

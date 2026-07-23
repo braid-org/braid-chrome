@@ -126,7 +126,23 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     headers = {}
     for (let x of Object.entries(request.headers)) headers[x[0]] = x[1]
 
-    is_chrome_showing_media = 
+    // Only take over pages whose response headers advertise Braid.
+    // Braidify always Varies on Subscribe; braid-text adds the rest.
+    // On normal websites, our extra GET can break logins (csrf rotation,
+    // single-use urls) and trip rate limiters into endless retries.
+    var braidly = /\bsubscribe\b/i.test(headers.vary ?? '')
+      || headers['accept-subscribe'] != null
+      || headers['current-version'] != null
+      || headers['merge-type'] != null
+      // Older braid servers (like mail.braid.org) predate braidify's
+      // Vary headers, but advertise Subscribe in their CORS allow-list
+      || /\bsubscribe\b/i.test(headers['access-control-allow-headers'] ?? '')
+
+    // A dev_message means devtools explicitly asked to connect this tab,
+    // which overrides the sniff
+    if (!braidly && !request.dev_message) return
+
+    is_chrome_showing_media =
       // showing an image..
       (document.body?.firstElementChild?.tagName === 'IMG' && 
       document.body.firstElementChild.src === location.href) ||

@@ -29,7 +29,7 @@ function connect() {
     backgroundConnection.postMessage({ cmd: 'init', tab_id: chrome.devtools.inspectedWindow.tabId })
 
     function rerequest() {
-        backgroundConnection.postMessage({ cmd: "rerequest", content_type: content_type_select.value, merge_type: merge_type_select.value, subscribe: subscribe_request.checked, ...(version_request.value ? { version: version_request.value } : {}), ...(parents_request.value ? { parents: parents_request.value } : {}), edit_source: edit_source.checked });
+        backgroundConnection.postMessage({ cmd: "rerequest", content_type: content_type_select.value, merge_type: merge_type_select.value, subscribe: subscribe_request.checked, encoding_dt: encoding_request.checked, ...(version_request.value ? { version: version_request.value } : {}), ...(parents_request.value ? { parents: parents_request.value } : {}), edit_source: edit_source.checked });
 
         last_version = version_request.value
         last_parents = parents_request.value
@@ -40,7 +40,9 @@ function connect() {
 
     resubmit_button.onclick = rerequest
     content_type_select.onchange = rerequest
-    merge_type_select.onchange = rerequest
+    merge_type_select.onchange = () => { update_encoding_enabled(); rerequest() }
+    encoding_request.onchange = rerequest
+    update_encoding_enabled()
 
     backgroundConnection.onDisconnect.addListener(() => setTimeout(connect, 500));
 
@@ -130,6 +132,7 @@ function raw_update() {
 
     for (let [k, v] of Object.entries({
         'subscribe': 'subscribe_response',
+        'encoding': 'encoding_response',
         'version': 'version_response',
         'parents': 'parents_response',
         'merge-type': 'merge_type_response',
@@ -143,6 +146,7 @@ function raw_update() {
     window.content_type_response.textContent = full_content_type.split(';')[0].trim()
     window.content_type_response.title = full_content_type
     window.subscribe_response.textContent = '' + (headers.subscribe != null)
+    update_encoding_enabled()
 
     window.error_d_label.style.display = get_failed ? 'inline' : 'none'
     window.error_d.textContent = get_failed
@@ -409,6 +413,13 @@ function raw_update() {
     }
 
     if (was_scrolled_to_bottom) id_messages.scrollTop = id_messages.scrollHeight
+}
+
+// dt binary encoding only applies to the dt merge-type, whether chosen
+// in the menu or served as the page's default
+function update_encoding_enabled() {
+    encoding_request.disabled = !(merge_type_select.value === 'dt' ||
+                                  headers['merge-type'] === 'dt')
 }
 
 function isScrolledToBottom(element) {

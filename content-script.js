@@ -8,6 +8,7 @@ var parents = null
 var content_type = null
 var merge_type = null
 var subscribe = true
+var encoding_dt = true
 var edit_source = false
 
 var textarea = null
@@ -50,7 +51,110 @@ function send_dev_message(m) {
 }
 
 function on_bytes_received(s) {
-  record_raw((new TextDecoder()).decode(s))
+  var text = decode_binary_as_markers(s)
+  if (text) record_raw(text)
+}
+
+// dt-encoded blobs put binary on the wire now. Show each blob as one
+// <binary> marker by following the framing: an update whose body starts
+// with dt's DMNDTYPS magic, sized by its Content-Length header
+var dt_blob_left = 0
+function decode_binary_as_markers(bytes) {
+  var td = new TextDecoder()
+  var out = ''
+  var i = 0
+
+  // A blob can span network chunks. Its full size was reported when it
+  // began, so swallow continuation bytes silently
+  if (dt_blob_left > 0) {
+    var n = Math.min(dt_blob_left, bytes.length)
+    dt_blob_left -= n
+    i = n
+  }
+
+  while (i < bytes.length) {
+    var body_start = find_crlfcrlf(bytes, i)
+    if (body_start < 0) {
+      out += unframed_binary_as_markers(bytes.subarray(i))
+      break
+    }
+    var headers = td.decode(bytes.subarray(i, body_start))
+    var len = parseInt(headers.match(/^content-length:\s*(\d+)\s*$/im)?.[1])
+    if (len >= 8 && starts_with_ascii(bytes, body_start, 'DMNDTYPS')) {
+      out += headers + `<binary: ${len} bytes>`
+      var have = Math.min(len, bytes.length - body_start)
+      dt_blob_left = len - have
+      i = body_start + have
+    } else {
+      // Not a dt blob; pass the segment through, sweeping it for any
+      // binary the framing didn't catch
+      out += unframed_binary_as_markers(bytes.subarray(i, body_start))
+      i = body_start
+    }
+  }
+  return out
+}
+
+// Returns the index just past the next \r\n\r\n, or -1
+function find_crlfcrlf(b, from) {
+  for (var i = from; i + 3 < b.length; i++)
+    if (b[i] == 13 && b[i+1] == 10 && b[i+2] == 13 && b[i+3] == 10)
+      return i + 4
+  return -1
+}
+
+function starts_with_ascii(b, at, s) {
+  if (at + s.length > b.length) return false
+  for (var i = 0; i < s.length; i++)
+    if (b[at + i] != s.charCodeAt(i)) return false
+  return true
+}
+
+// Wire text is \t \r \n, printable ascii, or a valid UTF-8 sequence.
+// Everything else (dt varints, stray high bytes) counts as binary.
+// Returns the sequence's byte length, or 0 for binary
+function text_seq_len(b, i) {
+  var b0 = b[i]
+  if (b0 == 9 || b0 == 10 || b0 == 13 || (b0 >= 32 && b0 < 127)) return 1
+  var n = b0 >= 0xf0 ? 4 : b0 >= 0xe0 ? 3 : b0 >= 0xc2 ? 2 : 0
+  if (!n || i + n > b.length) return 0
+  for (var j = 1; j < n; j++)
+    if ((b[i + j] & 0xc0) != 0x80) return 0
+  return n
+}
+
+// Fallback for binary that isn't dt-framed: mark each binary span,
+// growing it while more binary bytes appear nearby
+function unframed_binary_as_markers(bytes) {
+  var td = new TextDecoder()
+  var out = ''
+  var text_start = 0
+  var i = 0
+  while (i < bytes.length) {
+    var n = text_seq_len(bytes, i)
+    if (n) { i += n; continue }
+
+    var start = i, end = i + 1
+    for (var j = end; j < bytes.length && j < end + 16; ) {
+      var m = text_seq_len(bytes, j)
+      if (m) j += m
+      else end = ++j
+    }
+    out += td.decode(bytes.subarray(text_start, start))
+    out += `<binary: ${end - start} bytes>`
+    text_start = i = end
+  }
+  return out + td.decode(bytes.subarray(text_start))
+}
+
+// An outgoing body is all one thing: text, or a single blob
+function body_as_text_or_marker(bytes) {
+  for (var i = 0; i < bytes.length; ) {
+    var n = text_seq_len(bytes, i)
+    if (!n) return `<binary: ${bytes.length} bytes>`
+    i += n
+  }
+  return new TextDecoder().decode(bytes)
 }
 
 function record_raw(s) {
@@ -176,6 +280,7 @@ function connect(params) {
   content_type = params.content_type || nav_content_type
   merge_type = params.merge_type || nav_merge_type
   subscribe = !(params.subscribe === false)
+  encoding_dt = !(params.encoding_dt === false)
   edit_source = params.edit_source
 
   window.subscription_online = false
@@ -187,6 +292,7 @@ function connect(params) {
   // shown until the new response arrives, like the editor's content does
   versions = []
   raw_messages = []
+  dt_blob_left = 0
   get_failed = ''
   send_dev_message({ action: "init", versions, raw_messages, get_failed })
 
@@ -205,7 +311,10 @@ function disconnect() {
 async function handle_specific_version() {
   var abort_controller = current_sync.aborter
   window.stop()
-  document.body.innerHTML = '<textarea disabled style="position: fixed; left: 0px; top: 0px; right: 0px; bottom: 0px; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box; background: transparent;"></textarea>'
+  // Canvas/CanvasText are CSS system colors that follow the OS
+  // light/dark theme (given color-scheme), so dark-mode users get
+  // light text on a dark editor instead of white-on-white
+  document.body.innerHTML = '<textarea disabled style="position: fixed; left: 0px; top: 0px; right: 0px; bottom: 0px; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box; color-scheme: light dark; background: Canvas; color: CanvasText;"></textarea>'
   document.body.style.background = 'none'
   textarea = document.body.firstChild
 
@@ -231,6 +340,7 @@ async function handle_specific_version() {
 
     textarea.style.border = '4px red solid'
     textarea.style.background = '#fee'
+    textarea.style.color = '#800'  // else dark mode puts white text on the pink
     send_dev_message({ action: "get_failed", get_failed: '' + e })
   }
 }
@@ -240,7 +350,7 @@ async function handle_subscribe() {
   var abort_controller = sync.aborter
   let uniquePrefix = '_' + Math.random().toString(36).slice(2)
   let main_div = make_html(`<div
-          style="position: fixed; left: 0px; top: 0px; right: 0px; bottom: 0px; box-sizing: border-box;"
+          style="position: fixed; left: 0px; top: 0px; right: 0px; bottom: 0px; box-sizing: border-box; color-scheme: light dark; background: Canvas; color: CanvasText;"
       >
           <pre 
               class="${uniquePrefix}_diff_d" 
@@ -252,7 +362,7 @@ async function handle_subscribe() {
           >•</span>
           <textarea
               class="${uniquePrefix}_textarea"
-              style="width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box; background: transparent;"
+              style="width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box; background: transparent; color: inherit;"
               readonly
               disabled
           ></textarea>
@@ -277,6 +387,7 @@ async function handle_subscribe() {
     console.log(e?.stack || e)
     textarea.style.border = '4px red solid'
     textarea.style.background = '#fee'
+    textarea.style.color = '#800'  // else dark mode puts white text on the pink
     textarea.disabled = true
     send_dev_message({ action: "get_failed", get_failed: '' + e })
   }
@@ -300,7 +411,9 @@ async function handle_subscribe() {
       version: null,
       parents: () => get_parents(),
       peer,
-      headers: { Accept: content_type, ...(merge_type ? { ['Merge-Type']: merge_type } : {}) },
+      headers: { Accept: content_type, ...(merge_type ? { ['Merge-Type']: merge_type } : {}),
+                 // dt history is much faster shipped as binary chunks
+                 ...(merge_type === 'dt' && encoding_dt ? { 'Accept-Multiresponse-Encoding': 'dt' } : {}) },
       signal: abort_controller.signal,
       cache: 'no-store',
       subscribe: true,
@@ -342,12 +455,9 @@ async function handle_subscribe() {
   }
 
   if (merge_type === 'dt') {
+    // initSync caches, so rerequests re-enter here for free
     let wasmModuleBuffer = await (await fetch(chrome.runtime.getURL('dt_bg.wasm'))).arrayBuffer();
-    const imports = __wbg_get_imports();
-    __wbg_init_memory(imports);
-    const module = await WebAssembly.compile(wasmModuleBuffer);
-    const instance = await WebAssembly.instantiate(module, imports);
-    __wbg_finalize_init(instance, module);
+    initSync({ module: wasmModuleBuffer })
 
     let last_text = "";
     let last_text_code_points = 0;
@@ -452,7 +562,7 @@ async function handle_subscribe() {
           doc.del(commonStart_codePoints + numCodePointsToDelete - 1 - i, 1)
       if (stuffToInsert) doc.ins(commonStart_codePoints, stuffToInsert);
 
-      for (let p of dt_get_patches(doc, v)) {
+      for (let p of doc.getPatches(v)) {
         //   console.log(JSON.stringify(p));
 
         let start_version_seq = decode_version(p.version)[1] - (p.end - p.start - 1)
@@ -524,12 +634,46 @@ async function handle_subscribe() {
       }
     });
 
+    // Set the textarea straight from the doc, holding the cursor's
+    // index steady
+    function seed_textarea_from_doc() {
+      var s0 = textarea.selectionStart, s1 = textarea.selectionEnd
+      textarea.value = last_text = doc.get()
+      last_text_code_points = count_code_points(last_text)
+      textarea.selectionStart = Math.min(s0, textarea.value.length)
+      textarea.selectionEnd = Math.min(s1, textarea.value.length)
+    }
+
+    // Show the doc's changes since before_v in the textarea
+    function flush_textarea(before_v) {
+      // The textarea normalizes \r\n to \n and \r to \n, but last_text preserves \r's.
+      // Compare and map selection positions from textarea space to last_text space.
+      let { in_sync, sel } = compareNormalizedAndMapSel(
+        textarea.value,
+        last_text,
+        [textarea.selectionStart, textarea.selectionEnd]
+      )
+      if (!in_sync) errorify("textarea out of sync somehow!")
+
+      let new_text = applyChanges(
+        last_text,
+        sel,
+        doc.xfSince(before_v)
+      )
+
+      // Convert sel back from last_text space to textarea space
+      mapSelToNormalized(new_text, sel)
+
+      textarea.value = last_text = new_text
+      last_text_code_points = count_code_points(last_text)
+      textarea.selectionStart = sel[0]
+      textarea.selectionEnd = sel[1]
+    }
+
     response.subscribe(update => {
       let { version, parents, patches, body, status } = update
       if (status && parseInt(status) !== 200)
         return console.log(`ignoring update with status ${status}`)
-      if (body) body = update.body_text
-      if (patches) for (let p of patches) p.content = p.content_text
 
       if (textarea.hasAttribute("readonly")) {
         show_editor()
@@ -537,6 +681,49 @@ async function handle_subscribe() {
         textarea.removeAttribute('disabled')
         // textarea.focus()
       }
+
+      if (update.extra_headers?.['content-encoding'] === 'dt') {
+        // The server only marks the encoding per-update, so surface it in
+        // the devtools response column when the first binary update lands
+        if (headers.encoding !== 'dt') {
+          headers.encoding = 'dt'
+          send_dev_message({ action: "new_headers", headers })
+        }
+
+        // Remember the frontier, so we can tell what this chunk adds
+        let before_remote = doc.getRemoteVersion().map(x => x.join('-')).sort()
+        let before_v = doc.getLocalVersion()
+
+        // The body is a chunk of history in raw dt bytes; merge it directly
+        doc.mergeBytes(update.body)
+
+        // And expand it into viz rows, just like a server expands its
+        // dt file into updates for the wire
+        for (let p of dt_get_patches(doc, before_remote)) {
+          let new_version = {
+            method: "GET",
+            version: [p.version],
+            parents: p.parents,
+            patches: [{ unit: p.unit, range: p.range, content: p.content }]
+          }
+          versions.push(new_version)
+          send_dev_message({ action: "new_version", version: new_version })
+        }
+
+        if (before_v.length) {
+          flush_textarea(before_v)
+          // Wide concurrent spans can defeat xfSince's replay, so check
+          // the result against the doc, and reseed if it drifted
+          if (last_text !== doc.get()) seed_textarea_from_doc()
+        } else
+          // xfSince can't replay a whole history from scratch, so seed
+          // the textarea straight from the merged doc
+          seed_textarea_from_doc()
+        return
+      }
+
+      if (body) body = update.body_text
+      if (patches) for (let p of patches) p.content = p.content_text
 
       if (!patches) {
         let new_version = {
@@ -605,28 +792,7 @@ async function handle_subscribe() {
         errorify(e)
       }
 
-      // The textarea normalizes \r\n to \n and \r to \n, but last_text preserves \r's.
-      // Compare and map selection positions from textarea space to last_text space.
-      let { in_sync, sel } = compareNormalizedAndMapSel(
-        textarea.value,
-        last_text,
-        [textarea.selectionStart, textarea.selectionEnd]
-      )
-      if (!in_sync) errorify("textarea out of sync somehow!")
-
-      let new_text = applyChanges(
-        last_text,
-        sel,
-        doc.xfSince(before_v)
-      )
-
-      // Convert sel back from last_text space to textarea space
-      mapSelToNormalized(new_text, sel)
-
-      textarea.value = last_text = new_text
-      last_text_code_points = count_code_points(last_text)
-      textarea.selectionStart = sel[0]
-      textarea.selectionEnd = sel[1]
+      flush_textarea(before_v)
     }, on_subscribe_fail)
   } else if (merge_type === 'simpleton') {
     console.log(`got simpleton..`)
@@ -1114,7 +1280,7 @@ async function constructHTTPRequest(url, params) {
   }
   httpRequest += '\r\n';
   if (['POST', 'PATCH', 'PUT'].includes(params.method?.toUpperCase()) && params.body) {
-    httpRequest += typeof params.body === 'string' ? params.body : new TextDecoder().decode(params.body instanceof Uint8Array ? params.body : new Uint8Array(params.body instanceof Blob ? new Uint8Array(await params.body.arrayBuffer()) : ArrayBuffer.isView(params.body) ? params.body.buffer : new Uint8Array(binary)))
+    httpRequest += typeof params.body === 'string' ? params.body : body_as_text_or_marker(params.body instanceof Uint8Array ? params.body : new Uint8Array(params.body instanceof Blob ? new Uint8Array(await params.body.arrayBuffer()) : ArrayBuffer.isView(params.body) ? params.body.buffer : new Uint8Array(binary)))
   }
   httpRequest += '\r\n\r\n'
   return httpRequest

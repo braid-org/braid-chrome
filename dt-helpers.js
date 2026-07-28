@@ -8,7 +8,7 @@ function dt_diff_from(doc, version) {
     let a = [...doc.getStringAt(lv)];
     let far_left = '';
     for (let xf of doc.xfSince(lv)) {
-        console.log(`xf = ${JSON.stringify(xf, null, 4)}`);
+        // console.log(`xf = ${JSON.stringify(xf, null, 4)}`);
         if (xf.kind == "Ins") {
             a = [].concat(a.slice(0, xf.start), [...xf.content].map((c) => ['+', c, '']), a.slice(xf.start))
         } else if (xf.kind == "Del") {

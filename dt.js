@@ -378,6 +378,23 @@ class Doc {
         return ret >>> 0;
     }
     /**
+     * How much longer the document is now than it was at `version`.
+     *
+     * A caller holding the current length can subtract this to learn the
+     * length at an earlier version without replaying the history, which is
+     * what positioning an edit from a peer needs. Only the operations
+     * between the two versions are walked, so an edit written against a
+     * version a few behind the current one costs almost nothing.
+     * @param {Uint32Array} version
+     * @returns {number}
+     */
+    lenSince(version) {
+        const ptr0 = passArray32ToWasm0(version, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.doc_lenSince(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
      * @param {Uint32Array} time
      * @returns {any}
      */

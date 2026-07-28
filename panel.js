@@ -898,15 +898,15 @@ function render_history_window() {
         let top = version_top(lo), bot = version_bottom(hi)
         let height = Math.max(2, bot - top)
         swash = `<div style="position:absolute;left:0;right:0;top:${top}px;` +
-                `height:${height}px;background:rgba(255,249,105,0.42);` +
-                `border-top:2px solid rgba(240,226,95,0.85);` +
-                `border-bottom:2px solid rgba(240,226,95,0.85)"></div>`
+                `height:${height}px;background:rgba(150,200,255,0.28);` +
+                `border-top:2px solid rgba(66,153,255,0.95);` +
+                `border-bottom:2px solid rgba(66,153,255,0.95)"></div>`
         sel = `<div data-grip="body" style="position:absolute;left:0;right:0;` +
               `top:${top}px;height:${height}px;cursor:${grip('grab')}"></div>` +
               `<div data-grip="top" style="position:absolute;left:0;right:0;` +
               `top:${top - 4}px;height:10px;cursor:${grip('ns-resize')}"></div>` +
               `<div data-grip="bottom" style="position:absolute;left:0;right:0;` +
-              `top:${bot - 6}px;height:10px;cursor:${grip('ns-resize')}"></div>`
+              `top:${bot - 7}px;height:11px;cursor:${grip('ns-resize')}"></div>`
     }
     band.innerHTML = swash
     gutter.innerHTML = sel

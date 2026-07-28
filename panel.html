@@ -52,9 +52,14 @@
     >
 
       <!-- Top Checkbox Row -->
-      <div style="background-color: #FBFBFD; border-bottom: 1px solid #EEEFF8; padding: 5px;">
-        <input type="checkbox" id="id_raw_messages" />
+      <div style="background-color: #FBFBFD; border-bottom: 1px solid #EEEFF8;
+                  padding: 5px; display: flex; align-items: center; gap: 5px;">
+        <input type="checkbox" id="id_raw_messages" style="margin: 0" />
         <label for="id_raw_messages">Display Raw Messages</label>
+        <input type="checkbox" id="id_time_travel" style="margin: 0 0 0 20px" />
+        <label for="id_time_travel" id="id_time_travel_label">Time-Travel with Scroll</label>
+        <input type="checkbox" id="id_show_deletions" checked style="margin: 0 0 0 20px" />
+        <label for="id_show_deletions" id="id_show_deletions_label">Show deletions</label>
       </div>
 
       <!-- The messages go here -->
@@ -65,7 +70,9 @@
       <div id="metadata"
            style="
              position: absolute;
-             right: 10px;
+             /* Clear of the history pane's scrollbar, which sits at the very
+                right edge underneath this panel */
+             right: 26px;
              top: 0px;
              width: 50%;
              max-width: 251px;

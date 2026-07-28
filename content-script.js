@@ -24,6 +24,44 @@ var get_failed = ''
 var doc = null
 var default_version_count = 1
 var on_show_diff = () => { }
+
+// The author's colour, softened into something text stays readable on. The
+// panel sends the colours the history graph is using, in whatever form it
+// draws them; mixing towards transparent works for any of them. An author the
+// graph has never drawn falls back to a neutral highlight.
+// Bring a character offset into view, if it is not already. The browser is
+// asked where that character lands by laying the same text out in a hidden
+// copy of the box, which is the only way to account for soft wrapping.
+function reveal_offset(el, at) {
+  let content = el.value ?? el.textContent
+  if (at == null || at > content.length) return
+  let cs = getComputedStyle(el)
+  let mirror = document.createElement('div')
+  mirror.style.cssText = 'position:absolute;visibility:hidden;top:0;left:-9999px;'
+    + 'white-space:pre-wrap;overflow-wrap:break-word'
+  for (let k of ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing',
+                 'padding', 'border', 'boxSizing', 'width', 'textIndent'])
+    mirror.style[k] = cs[k]
+  mirror.textContent = content.slice(0, at)
+  let marker = document.createElement('span')
+  marker.textContent = '\u200b'
+  mirror.appendChild(marker)
+  document.body.appendChild(mirror)
+  let y = marker.offsetTop
+  let line = parseFloat(cs.lineHeight) || 16
+  mirror.remove()
+
+  // Only move if the change is somewhere the reader cannot see. Scrolling a
+  // document that already shows the edit would be the view chasing itself.
+  if (y >= el.scrollTop && y + line <= el.scrollTop + el.clientHeight) return
+  el.scrollTop = Math.max(0, y - el.clientHeight / 2 + line / 2)
+}
+
+function author_tint(colors, agent) {
+  let c = colors?.[agent]
+  return c ? `color-mix(in oklab, ${c} 22%, transparent)`
+           : 'rgba(140, 140, 140, 0.25)'
+}
 var get_parents = () => null
 
 var current_sync = null
@@ -210,7 +248,8 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
   } else if (request.cmd == 'panel_closed') {
     if (deleteIcon) deleteIcon.style.display = 'none'
   } else if (request.cmd == "show_diff") {
-    on_show_diff(request.from_version)
+    on_show_diff(request.from_version, request.to_version, request.colors,
+                 request.show_deletions, request.at)
   } else if (request.cmd == "edit_source") {
     edit_source = true
     show_editor()
@@ -469,7 +508,7 @@ async function handle_subscribe() {
 
     get_parents = () => doc.getRemoteVersion().map((x) => x.join("-")).sort()
 
-    on_show_diff = (from_version) => {
+    on_show_diff = (from_version, to_version, colors, show_deletions, at) => {
       var scrollPos = (window.getComputedStyle(diff_d).display === "none") ? {
         vertical: textarea.scrollTop,
         horizontal: textarea.scrollLeft
@@ -489,28 +528,32 @@ async function handle_subscribe() {
       diff_d.style.display = 'block';
       textarea.style.display = 'none';
 
-      const diffArray = dt_diff_from(doc, from_version);
+      let diffArray = dt_diff_from(doc, from_version, to_version);
+      // Dropping the deleted runs leaves the text exactly as it stood at the
+      // far end of the span, so it can be read and copied like ordinary text,
+      // still coloured by whoever wrote each part.
+      if (!show_deletions) diffArray = diffArray.filter(x => x[0] !== -1);
       diff_d.innerHTML = '';
       diffArray.forEach(element => {
-        let [status, text] = element;
+        let [status, text, agent] = element;
+        if (!text) return;
         let spanElem = document.createElement('span');
-        switch (status) {
-          case -1:
-            // Deleted text with a red background
-            // spanElem.style.backgroundColor = '#ffa8a850';
-            spanElem.style.backgroundColor = '#ffa8a824';
-            break;
-          case 1:
-            // Inserted text with a green background
-            spanElem.style.backgroundColor = '#a8ffaa50';
-            spanElem.style.opacity = 0.25;
-            break;
+        // Edits are highlighted in their author's colour, the same one that
+        // author has in the history graph, so the text reads as who wrote what.
+        // Struck through and faded is what says removed.
+        if (status) {
+          spanElem.style.backgroundColor = author_tint(colors, agent);
+          if (status === -1) {
+            spanElem.style.textDecoration = 'line-through';
+            spanElem.style.opacity = 0.55;
+          }
         }
         spanElem.textContent = text;
         diff_d.appendChild(spanElem);
       });
       diff_d.scrollTop = scrollPos.vertical
       diff_d.scrollLeft = scrollPos.horizontal
+      reveal_offset(diff_d, at)
     }
 
     textarea.addEventListener("input", async () => {

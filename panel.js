@@ -43,10 +43,10 @@ function connect() {
     backgroundConnection = chrome.runtime.connect({ name: "braid-devtools-panel" })
     backgroundConnection.onMessage.addListener(add_message)
 
-    backgroundConnection.postMessage({ cmd: 'init', tab_id: chrome.devtools.inspectedWindow.tabId })
+    backgroundConnection?.postMessage({ cmd: 'init', tab_id: chrome.devtools.inspectedWindow.tabId })
 
     function rerequest() {
-        backgroundConnection.postMessage({ cmd: "rerequest", content_type: content_type_select.value, merge_type: merge_type_select.value, subscribe: subscribe_request.checked, encoding_dt: encoding_request.checked, ...(version_request.value ? { version: version_request.value } : {}), ...(parents_request.value ? { parents: parents_request.value } : {}), edit_source: edit_source.checked });
+        backgroundConnection?.postMessage({ cmd: "rerequest", content_type: content_type_select.value, merge_type: merge_type_select.value, subscribe: subscribe_request.checked, encoding_dt: encoding_request.checked, ...(version_request.value ? { version: version_request.value } : {}), ...(parents_request.value ? { parents: parents_request.value } : {}), edit_source: edit_source.checked });
 
         last_version = version_request.value
         last_parents = parents_request.value
@@ -63,7 +63,10 @@ function connect() {
 
     backgroundConnection.onDisconnect.addListener(() => setTimeout(connect, 500));
 
-    id_raw_messages.onchange = () => update()
+    id_raw_messages.onchange = () => { update_time_travel_enabled(); update() }
+    id_time_travel.onchange = toggle_time_travel
+    id_show_deletions.onchange = () => show_span_diff()
+    update_time_travel_enabled()
 
     subscribe_request.onchange = () => {
         if (subscribe_request.checked) {
@@ -89,7 +92,7 @@ function connect() {
     }
 
     edit_source.oninput = () => {
-        if (edit_source.checked) backgroundConnection.postMessage({ cmd: "edit_source" })
+        if (edit_source.checked) backgroundConnection?.postMessage({ cmd: "edit_source" })
         else rerequest()
     }
 
@@ -222,6 +225,7 @@ function raw_update() {
         id_messages.scrollTop = id_messages.scrollHeight
         if (layout) render_history_window()
     }
+    if (!layout) update_time_travel()
 }
 
 // dt binary encoding only applies to the dt merge-type, whether chosen
@@ -257,13 +261,29 @@ const LINE_H = 18
 // than from stretching the leading, so a multi-line patch stays a paragraph.
 const ROW_PAD = 10
 const HEADER_H = 34
+// The proportional face the version identifiers are drawn in
+const LABEL_FONT = 'font-family:Arial,sans-serif;font-size:medium;'
 const LANE_W = 64
+// Room either side of the version DAG. The DAG column doubles as the region a
+// span of time is dragged out of, so it gets a little space to grab hold of.
+const LANE_PAD = 10
+const DAG_W = LANE_PAD + LANE_W + LANE_PAD
 const DOT_R = 6
 // Rows kept rendered past each edge of the viewport, so that a small scroll
 // reveals rows that are already there.
 const OVERSCAN_PX = 250
 // One string for the monospace cells, shared by the measuring and the drawing
 const MONO = 'font-family:monospace'
+
+// The selected span of time, as a pair of indices into layout.vs, inclusive
+// and in either order until it is normalized. A click selects the span across
+// a single version, which is the degenerate case of the same gesture.
+let span = null
+// A drag in progress: which end of the span is following the mouse
+let drag = null
+// The version the time-travel line is crossing, when the line is on. The span
+// follows it, so this only records what the line last landed on.
+let travelling_vi = null
 
 // What the last layout pass worked out. Everything the renderer needs to draw
 // any row, without consulting the DOM or the version list again.
@@ -339,7 +359,7 @@ function layout_history() {
 // Column widths are fixed. A table that sized its columns to their contents
 // would need every row in the DOM, which is the thing being avoided here.
 function measure_columns(L) {
-    let label_style = 'font-family:Arial,sans-serif;font-size:medium;'
+    let label_style = LABEL_FONT
     L.widest = {
         version: longest(versions.map(v => '' + v.version || 'root')),
         unit: longest(versions.flatMap(v => v.patches.map(p => p.unit))) || 'text',
@@ -350,6 +370,21 @@ function measure_columns(L) {
         unit: measure_text(L.widest.unit, MONO) + 18,
         range: measure_text(L.widest.range, MONO) + 18,
     }
+
+    // The column has to fit the longest identifier in the document, but the
+    // band should hug what is typically on screen, so that one unusually long
+    // peer name does not stretch it out across empty space. Sample identifiers
+    // across the history, measure what they actually render as, and take a
+    // high percentile of that. Ranking by string length would not do: seq
+    // numbers gain digits as a document grows, so most identifiers end up at
+    // the longest length and the percentile lands on the maximum anyway.
+    let step = Math.max(1, Math.floor(versions.length / 100))
+    let widths = []
+    for (let i = 0; i < versions.length; i += step)
+        widths.push(measure_text('' + versions[i].version || 'root', LABEL_FONT))
+    widths.sort((a, b) => a - b)
+    L.band_w = DAG_W + Math.min(L.cols.version,
+                                (widths[Math.floor(widths.length * 0.9)] || 0) + 8)
 
     // How many characters fit across the content column, and so how many
     // lines a given string of content will take.
@@ -529,6 +564,192 @@ function remove_final_merge(L) {
     L.merge = null
 }
 
+// Dragging out a span of time in the gutter. A fresh drag on empty gutter
+// starts a new span; grabbing an edge moves that edge; grabbing the body
+// slides the whole span while keeping its length.
+function install_gutter(body) {
+    let gutter = document.getElementById('history_gutter')
+    let autoscroll = null, autoscroll_timer = null
+
+    let y_of = (e) => e.clientY - body.getBoundingClientRect().top
+
+    gutter.onmousedown = (e) => {
+        if (!layout) return
+        e.preventDefault()
+        let vi = version_at(y_of(e))
+        let handle = e.target.dataset?.grip
+        if (handle === 'top') drag = { mode: 'edge', cursor: 'ns-resize',
+                                      anchor: Math.max(span.a, span.b), y: e.clientY }
+        else if (handle === 'bottom') drag = { mode: 'edge', cursor: 'ns-resize',
+                                              anchor: Math.min(span.a, span.b), y: e.clientY }
+        else if (handle === 'body') drag = { mode: 'move', cursor: 'grabbing', from: vi,
+                                            y: e.clientY, a: span.a, b: span.b }
+        else {
+            // Drawing a new span is dragging its far edge outwards
+            drag = { mode: 'edge', cursor: 'ns-resize', anchor: vi, y: e.clientY }
+            select_span(vi, vi)
+        }
+        document.body.style.cursor = drag.cursor
+        autoscroll_timer = setInterval(autoscroll, 16)
+        // The grips carry their own cursors, which outrank anything set on an
+        // ancestor, so pressing the button has to draw again for the hand to
+        // close. Waiting for the first movement would leave it open on a press
+        // that never turns into a drag.
+        render_history_window()
+    }
+
+    document.addEventListener('mousemove', (e) => {
+        if (!drag || !layout) return
+        drag.y = e.clientY
+        let vi = version_at(y_of(e))
+        if (drag.mode === 'edge') select_span(drag.anchor, vi)
+        else {
+            // Slide both ends by the same amount, stopping at the ends of
+            // history rather than letting the span shorten against them
+            let lo = Math.min(drag.a, drag.b), hi = Math.max(drag.a, drag.b)
+            let shift = Math.max(-lo, Math.min(vi - drag.from, layout.vs.length - 1 - hi))
+            select_span(lo + shift, hi + shift)
+        }
+    })
+
+    document.addEventListener('mouseup', () => {
+        if (!drag) return
+        drag = null
+        document.body.style.cursor = ''
+        clearInterval(autoscroll_timer)
+        // The gutter and its grips take their cursors from whether a drag is
+        // running, and that is decided at render time, so ending one has to
+        // draw again or the cursor of the finished drag stays on screen.
+        render_history_window()
+    })
+
+    // Dragging above or below the view scrolls it, so a span can reach further
+    // than one screenful. The speed grows with how far past the edge the mouse
+    // has gone, the way selecting text does.
+    autoscroll = () => {
+        if (!drag || !layout) return
+        let r = id_messages.getBoundingClientRect()
+        let over = drag.y < r.top ? drag.y - r.top
+                 : drag.y > r.bottom ? drag.y - r.bottom : 0
+        if (!over) return
+        id_messages.scrollTop += Math.sign(over) * Math.min(40, 4 + Math.abs(over) / 4)
+        let vi = version_at(drag.y - body.getBoundingClientRect().top)
+        if (drag.mode === 'edge') select_span(drag.anchor, vi)
+        else render_history_window()
+    }
+}
+
+// The span, normalized, or null. Selecting is separated from acting on the
+// selection so that dragging can update the highlight on every mouse move
+// without asking the page to redraw a diff each time.
+// `from_line` marks a span the scroll line placed. Anything else is the user
+// placing one by hand, which takes the line's job away from it.
+function select_span(a, b, from_line) {
+    span = a == null ? null : { a, b }
+    if (!from_line && id_time_travel.checked) {
+        id_time_travel.checked = false
+        travelling_vi = null
+    }
+    show_span_diff()
+    render_history_window()
+}
+
+// What the span changed: the text as it stood before its first version,
+// marked up with everything its versions inserted and deleted. A span of one
+// version therefore answers "what did this edit do?".
+let last_diff = '', diff_queued = false
+function show_span_diff() {
+    // Dropping the span is a one-off, and has to reach the page before the
+    // time-travel text that follows it, so it does not wait for a frame.
+    // Dragging is the opposite: it fires faster than the display refreshes,
+    // so those are coalesced.
+    if (!span) return send_span_diff()
+    if (diff_queued) return
+    diff_queued = true
+    requestAnimationFrame(() => { diff_queued = false; send_span_diff() })
+}
+
+function send_span_diff() {
+    if (!span) {
+        if (last_diff === '') return
+        last_diff = ''
+        return backgroundConnection?.postMessage({ cmd: 'show_diff', from_version: null })
+    }
+    let lo = Math.min(span.a, span.b), hi = Math.max(span.a, span.b)
+    let before = layout.vs[lo].parents?.length ? layout.vs[lo].parents
+                                               : layout.vs[lo].version
+    let key = lo + ':' + hi + ':' + id_show_deletions.checked
+    if (key === last_diff) return
+    last_diff = key
+    let digits = layout.vs[hi].patches?.[0]?.range?.match(/\d+/)
+    backgroundConnection?.postMessage({
+        cmd: "show_diff",
+        from_version: before,
+        to_version: layout.vs[hi].version,
+        colors: layout.actor_to_color,
+        show_deletions: id_show_deletions.checked,
+        at: digits ? 1 * digits[0] : null,
+    })
+}
+
+function toggle_time_travel() {
+    // Forget where the line last was, so switching it on takes hold of the
+    // span again rather than deciding nothing has moved.
+    travelling_vi = null
+    update_time_travel()
+}
+
+function update_time_travel_enabled() {
+    // Raw messages replace the history view altogether, so there is nothing
+    // to scroll through and the checkbox has no meaning.
+    let off = id_raw_messages.checked
+    id_time_travel.disabled = off
+    id_time_travel_label.style.opacity = off ? 0.4 : 1
+    if (off && id_time_travel.checked) id_time_travel.checked = false
+}
+
+// The dashed line sits across the middle of the view, and the span follows it:
+// whichever version crosses the line is the one selected, so scrolling the
+// history plays the document back one edit at a time. What you see of it is
+// then the same thing a hand-placed span shows.
+function update_time_travel() {
+    let line = document.getElementById('history_line')
+    if (!line) return
+    update_time_travel_enabled()
+    if (!id_time_travel.checked || id_time_travel.disabled || !layout) {
+        line.style.display = 'none'
+        travelling_vi = null
+        return
+    }
+
+    let mid = id_messages.scrollTop + id_messages.clientHeight / 2
+    line.style.display = 'block'
+    line.style.top = mid + 'px'
+
+    let vi = version_at(mid)
+    if (vi === travelling_vi) return
+    travelling_vi = vi
+    select_span(vi, vi, true)
+}
+
+function version_top(vi) { return layout.row_tops[layout.row_of[vi]] }
+function version_bottom(vi) {
+    return layout.row_tops[vi + 1 < layout.vs.length
+        ? layout.row_of[vi + 1] : layout.rows.length]
+}
+
+// The version covering a point on the page, clamped to the ends.
+function version_at(y) {
+    let tops = layout.row_tops
+    let lo = 0, hi = layout.rows.length - 1
+    while (lo < hi) {
+        let mid = (lo + hi) >> 1
+        if (tops[mid + 1] <= y) lo = mid + 1
+        else hi = mid
+    }
+    return layout.rows[lo].vi
+}
+
 // The rows and lane segments that fall inside the viewport, and nothing else.
 // Everything is written as one string of HTML per container: setting innerHTML
 // once is far cheaper than appending a few hundred nodes one at a time.
@@ -543,21 +764,28 @@ function render_history_window() {
         id_messages.style.position = 'relative'
         id_messages.innerHTML =
             `<div id="history_body" style="position:relative">` +
-            `<div id="history_lanes" style="position:absolute;left:0;top:0;width:${LANE_W}px;height:100%;pointer-events:none"></div>` +
-            `<div id="history_rows"></div></div>`
+            `<div id="history_band" style="position:absolute;left:0;top:0;` +
+            `height:100%;pointer-events:none"></div>` +
+            `<div id="history_lanes" style="position:absolute;left:${LANE_PAD}px;top:0;` +
+            `width:${LANE_W}px;height:100%;pointer-events:none"></div>` +
+            `<div id="history_rows"></div>` +
+            `<div id="history_gutter" style="position:absolute;left:0;top:0;` +
+            `height:100%;cursor:ns-resize;z-index:1"></div>` +
+            `<div id="history_line" style="position:absolute;left:0;right:0;height:0;` +
+            `border-top:1px dashed #e08b00;display:none;pointer-events:none;z-index:2"></div>` +
+            `</div>`
 
         body = document.getElementById('history_body')
 
-        // One handler for the whole view, since the rows under it come and go
+        // The rows themselves are ordinary selectable text, so that a range or
+        // a piece of content can be copied out. Clicking among them, without
+        // having selected any of that text, drops the span.
         body.onclick = (e) => {
-            let row = e.target.closest?.('[data-vi]')
-            if (!row) return
-            let i = 1 * row.dataset.vi
-            backgroundConnection.postMessage({
-                cmd: "show_diff",
-                from_version: i < vs.length - 1 ? vs[i].version : null
-            })
+            if (e.target.closest?.('#history_gutter')) return
+            if (window.getSelection?.().toString()) return
+            select_span(null, null)
         }
+        install_gutter(body)
         id_messages.onscroll = () => {
             if (scroll_render_queued) return
             scroll_render_queued = true
@@ -582,9 +810,10 @@ function render_history_window() {
     let last = first
     while (last < rows.length && row_tops[last] < y_bot) last++
 
-    let h = [`<div style="position:absolute;top:12px;left:${LANE_W}px;color:#555">Version</div>`,
-             `<div style="position:absolute;top:12px;left:${LANE_W + cols.version}px;color:#555">Range</div>`,
-             `<div style="position:absolute;top:12px;left:${LANE_W + cols.version + cols.unit + cols.range + 14}px;color:#555">Content</div>`]
+    let x0 = DAG_W
+    let h = [`<div style="position:absolute;top:12px;left:${x0}px;color:#555">Version</div>`,
+             `<div style="position:absolute;top:12px;left:${x0 + cols.version}px;color:#555">Range</div>`,
+             `<div style="position:absolute;top:12px;left:${x0 + cols.version + cols.unit + cols.range + 14}px;color:#555">Content</div>`]
 
     for (let r = first; r < last; r++) {
         let { vi, pi } = rows[r]
@@ -594,12 +823,16 @@ function render_history_window() {
         h.push(`<div data-vi="${vi}" style="position:absolute;left:0;right:0;` +
                `top:${row_tops[r] + ROW_PAD / 2}px;` +
                `height:${row_tops[r + 1] - row_tops[r] - ROW_PAD}px;display:flex;align-items:flex-start;` +
-               `line-height:${LINE_H}px;white-space:pre;cursor:pointer">`)
-        h.push(`<div style="width:${LANE_W}px;flex:none"></div>`)
+               `line-height:${LINE_H}px;white-space:pre">`)
+        h.push(`<div style="width:${DAG_W}px;flex:none"></div>`)
         // Only the first row of a version is labelled; the rest of its patches
         // line up underneath it.
-        h.push(`<div style="width:${cols.version}px;flex:none;color:${color};overflow:hidden;text-overflow:ellipsis">` +
-               (pi === 0 ? esc(v_string || 'root') : '') + `</div>`)
+        let label = pi === 0 ? esc(v_string || 'root') : ''
+        if (label && vi === travelling_vi)
+            label = `<span style="background:${color};color:white;padding:0 3px;` +
+                    `border-radius:2px">${label}</span>`
+        h.push(`<div style="width:${cols.version}px;flex:none;color:${color};` +
+               `overflow:hidden;text-overflow:ellipsis">${label}</div>`)
 
         let patch = v.patches[pi]
         if (!patch) {
@@ -614,7 +847,7 @@ function render_history_window() {
         if (patch.content != null && patch.content !== '') {
             // break-all rather than wrapping at spaces, so that where the text
             // breaks matches the line count the layout worked out
-            h.push(`<div style="flex:1;min-width:0;color:black;background:rgb(245,245,245);` +
+            h.push(`<div style="flex:0 1 auto;min-width:0;color:black;background:rgb(245,245,245);` +
                    `${MONO};padding:0 4px;border-radius:3px;` +
                    `white-space:pre-wrap;word-break:break-all">` + esc(patch.content) + `</div>`)
         } else {
@@ -648,6 +881,37 @@ function render_history_window() {
                `<circle cx="50%" cy="50%" r="50%" stroke-width="0" fill="${c.color}" /></svg>`)
     }
     document.getElementById('history_lanes').innerHTML = g.join('')
+
+    // The gutter's selection, drawn once rather than per row. It reaches
+    // across the DAG and the version identifiers next to it, which are the
+    // two columns that say *when* rather than *what*.
+    let gutter = document.getElementById('history_gutter')
+    let band = document.getElementById('history_band')
+    gutter.style.width = band.style.width = layout.band_w + 'px'
+    gutter.style.cursor = drag ? drag.cursor : 'ns-resize'
+    // Mid-drag the grips take the cursor of the drag, so that the band
+    // arriving under the mouse does not change what it says.
+    let grip = c => drag ? 'inherit' : c
+    let sel = '', swash = ''
+    if (span) {
+        let lo = Math.min(span.a, span.b), hi = Math.max(span.a, span.b)
+        let top = version_top(lo), bot = version_bottom(hi)
+        let height = Math.max(2, bot - top)
+        swash = `<div style="position:absolute;left:0;right:0;top:${top}px;` +
+                `height:${height}px;background:rgba(255,249,105,0.42);` +
+                `border-top:2px solid rgba(240,226,95,0.85);` +
+                `border-bottom:2px solid rgba(240,226,95,0.85)"></div>`
+        sel = `<div data-grip="body" style="position:absolute;left:0;right:0;` +
+              `top:${top}px;height:${height}px;cursor:${grip('grab')}"></div>` +
+              `<div data-grip="top" style="position:absolute;left:0;right:0;` +
+              `top:${top - 4}px;height:10px;cursor:${grip('ns-resize')}"></div>` +
+              `<div data-grip="bottom" style="position:absolute;left:0;right:0;` +
+              `top:${bot - 6}px;height:10px;cursor:${grip('ns-resize')}"></div>`
+    }
+    band.innerHTML = swash
+    gutter.innerHTML = sel
+
+    update_time_travel()
 }
 let scroll_render_queued = false
 

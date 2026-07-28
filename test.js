@@ -65,7 +65,8 @@ function make_window() {
             append(...c) { this.children.push(...c) },
             remove() {},
             closest: () => null,
-            getBoundingClientRect: () => ({ x: 0, y: 0, width: 0, height: 12 }),
+            getBoundingClientRect: () => ({ x: 0, y: 0, top: 0, left: 0,
+                                            bottom: 600, right: 900, width: 900, height: 600 }),
             // Text is measured as a fixed width per character, which is all
             // the column arithmetic needs and is stable across machines.
             get offsetWidth() { return 8 * this.textContent.length },
@@ -78,14 +79,16 @@ function make_window() {
     const document = {
         createElement: el,
         body: el('body'),
-        getElementById: id => (by_id[id] = by_id[id] || el('div')),
+        // Only elements the markup has actually declared, so that code which
+        // builds its own containers is exercised rather than handed one.
+        getElementById: id => by_id[id] || null,
         addEventListener() {},
     }
     const win = {
         document, console,
         requestAnimationFrame: f => f(),
         addEventListener() {}, onload: null,
-        setTimeout, clearTimeout, atob, btoa,
+        setTimeout, clearTimeout, setInterval, clearInterval, atob, btoa,
         TextEncoder, TextDecoder, performance,
         crypto: require('crypto').webcrypto,
         backgroundConnection: { postMessage() {} },
@@ -100,6 +103,7 @@ function make_window() {
             devtools: { inspectedWindow: { tabId: 1 } },
         },
     }
+    win.getSelection = () => ({ toString: () => '' })
     win.window = win
     win.self = win
     win.globalThis = win
@@ -110,7 +114,9 @@ function make_window() {
         'merge_type_response', 'content_type_response', 'error_d', 'error_d_label',
         'edit_source_d', 'encoding_request', 'merge_type_select',
         'content_type_select', 'subscribe_request', 'version_request',
-        'parents_request', 'edit_source', 'resubmit_button', 'show_resubmit'])
+        'parents_request', 'edit_source', 'resubmit_button', 'show_resubmit',
+        'id_time_travel', 'id_time_travel_label',
+        'id_show_deletions', 'id_show_deletions_label'])
         win[id] = by_id[id] = el('div')
 
     return { win, by_id, ctx: vm.createContext(win) }
@@ -331,6 +337,266 @@ check('content wrapping makes a row taller, and moves the rows below it', () => 
     ok(tall.includes('first line\nsecond line'), 'newlines were not kept')
     for (let i = 1; i < tops.length; i++)
         ok(tops[i] > tops[i - 1], 'rows are not in increasing order down the page')
+})
+
+// ------------------------------------------------ selecting a span of time
+
+console.log('\nselecting a span of time')
+
+check('a span of one version is the degenerate case of a drag', () => {
+    prun('span = null; select_span(7, 7)')
+    eq(prun('[layout.vs[Math.min(span.a, span.b)].version[0], span.a === span.b]'),
+       ['alice-7', true], '[version, single]')
+})
+
+check('rows carry no click handler, so their text can be selected', () => {
+    prun(`fill(${N}); layout = null; layout_history(); render_history_window()`)
+    const rows = panel.by_id['history_rows'].innerHTML
+    ok(!rows.includes('cursor:pointer'), 'rows still look clickable')
+    ok(!rows.includes('onclick'), 'rows still carry a click handler')
+})
+
+check('the band covers the version DAG and the identifiers beside it', () => {
+    prun(`fill(${N}); layout = null; layout_history(); select_span(2, 6, true)`)
+    const g = panel.by_id['history_gutter']
+    ok(panel.by_id['history_band'].innerHTML.includes('background:rgba'),
+       'no highlighter drawn')
+    ok(g.innerHTML.includes('data-grip="body"'), 'no grips drawn')
+    ok(g.innerHTML.includes('data-grip="top"') && g.innerHTML.includes('data-grip="bottom"'),
+       'the two edge handles are missing')
+    // The band fills the gutter, and the gutter reaches past the DAG to cover
+    // the identifiers, which is also the region you can drag a span out of.
+    const w = parseInt(g.style.width)
+    ok(w === prun('layout.band_w'), `gutter is ${w}px, layout says ${prun('layout.band_w')}`)
+    ok(w > prun('DAG_W'), `the gutter stops at the DAG (${w}px)`)
+    ok(w <= prun('DAG_W + layout.cols.version'),
+       'the gutter reaches past the identifiers into blank space')
+})
+
+check('the band spans exactly the selected versions', () => {
+    prun('select_span(2, 6, true)')
+    const band = panel.by_id['history_band'].innerHTML.match(/top:(\d+)px;\s*height:(\d+)px/)
+    ok(band, 'could not read the band geometry')
+    const [top, height] = [+band[1], +band[2]]
+    eq([top, top + height],
+       [prun('version_top(2)'), prun('version_bottom(6)')], '[band top, band bottom]')
+})
+
+check('a span selected backwards covers the same versions', () => {
+    prun('select_span(6, 2)')
+    const a = panel.by_id['history_band'].innerHTML.match(/top:(\d+)px;\s*height:(\d+)px/)
+    prun('select_span(2, 6)')
+    const b = panel.by_id['history_band'].innerHTML.match(/top:(\d+)px;\s*height:(\d+)px/)
+    eq([a[1], a[2]], [b[1], b[2]], 'dragging up and dragging down')
+})
+
+check('a point on the page maps back to the version drawn there', () => {
+    for (const vi of [0, 3, 50, 1999, 2500]) {
+        const top = prun(`version_top(${vi})`), bot = prun(`version_bottom(${vi})`)
+        eq(prun(`version_at(${(top + bot) / 2})`), vi, `middle of version ${vi}`)
+        eq(prun(`version_at(${top})`), vi, `top edge of version ${vi}`)
+    }
+})
+
+check('the cursor keeps its meaning while a span is being drawn', () => {
+    prun('select_span(2, 6)')
+    prun(`drag = { mode: 'edge', cursor: 'ns-resize', anchor: 2, y: 0 }`)
+    prun('render_history_window()')
+    const g = panel.by_id['history_gutter']
+    eq(g.style.cursor, 'ns-resize', 'gutter cursor while drawing a span')
+    ok(!/cursor:(grab|ns-resize)"/.test(g.innerHTML),
+       'a grip talks over the cursor of the drag in progress')
+    prun('drag = null; render_history_window()')
+})
+
+check('pressing on a span closes the hand before any movement', () => {
+    prun('select_span(2, 6)')
+    const g = panel.by_id['history_gutter']
+    eq(g.style.cursor, 'ns-resize', 'before the press')
+    ok(g.innerHTML.includes('cursor:grab'), 'the span should offer a hand to take')
+    // press on the body, with no mousemove following
+    const top = prun('version_top(2)')
+    panel.by_id['history_gutter'].onmousedown({
+        clientY: top + 4, preventDefault() {}, target: { dataset: { grip: 'body' } },
+    })
+    eq(g.style.cursor, 'grabbing', 'the hand did not close on mousedown')
+    ok(!g.innerHTML.includes('cursor:grab'), 'a grip still offers the open hand')
+    prun('drag = null; document.body.style.cursor = ""; render_history_window()')
+})
+
+check('the cursor of a finished drag does not stay on screen', () => {
+    prun('select_span(2, 6)')
+    // slide the whole span, which is the one gesture that closes the hand
+    prun(`drag = { mode: 'move', cursor: 'grabbing', from: 4, y: 0, a: 2, b: 6 }`)
+    prun('render_history_window()')
+    eq(panel.by_id['history_gutter'].style.cursor, 'grabbing', 'mid-drag')
+    prun('drag = null; render_history_window()')
+    const g = panel.by_id['history_gutter']
+    eq(g.style.cursor, 'ns-resize', 'after the drag ends')
+    ok(g.innerHTML.includes('cursor:grab'), 'the span offers no hand once released')
+    ok(!g.innerHTML.includes('cursor:inherit'), 'grips still deferring to a dead drag')
+})
+
+check('the cursors say what each part of the band does', () => {
+    prun('select_span(2, 6, true)')
+    const g = panel.by_id['history_gutter']
+    // Drawing a span, and moving either edge, is the window-border gesture.
+    // The hand is kept for sliding a whole span, which really is picking
+    // something up.
+    prun('select_span(null, null); render_history_window()')
+    eq(panel.by_id['history_gutter'].style.cursor, 'ns-resize', 'empty gutter cursor')
+    prun('select_span(2, 6); render_history_window()')
+    ok(panel.by_id['history_gutter'].innerHTML.includes('cursor:grab'),
+       'a selected span offers no hand to move it')
+    ok(g.innerHTML.includes('cursor:grab'), 'the band body is not grabbable')
+    ok((g.innerHTML.match(/cursor:ns-resize/g) || []).length === 2,
+       'both edges should resize')
+})
+
+// --------------------------------------------------------- time travel line
+
+console.log('\ntime travelling with the scroll')
+
+// A stand-in for the panel's own copy of the document, which the real panel
+// builds from the history the page sends it.
+prun(`dt_doc = { getStringAt: lv => 'text@' + lv, remoteToLocalVersion: v => v[0] }`)
+prun('__doc = dt_doc')
+
+check('the line stays hidden until it is switched on', () => {
+    prun('select_span(null, null)')
+    panel.win.id_time_travel.checked = false
+    prun('update_time_travel()')
+    eq(panel.by_id['history_line'].style.display, 'none', 'line display')
+})
+
+check('switching it on puts the line across the middle of the view', () => {
+    panel.win.id_time_travel.checked = true
+    prun('update_time_travel_enabled()')
+    panel.win.id_messages.scrollTop = 4000
+    prun('update_time_travel()')
+    eq(panel.by_id['history_line'].style.display, 'block', 'line display')
+    eq(panel.by_id['history_line'].style.top,
+       (4000 + panel.win.id_messages.clientHeight / 2) + 'px', 'line position')
+})
+
+check('the version under the line is the one being shown', () => {
+    panel.win.id_messages.scrollTop = 4000
+    prun('update_time_travel()')
+    const mid = 4000 + panel.win.id_messages.clientHeight / 2
+    const vi = prun(`version_at(${mid})`)
+    eq(prun('travelling_vi'), vi, 'version under the line')
+    eq(prun('[Math.min(span.a, span.b), Math.max(span.a, span.b)]'), [vi, vi],
+       'the span should be the single version under the line')
+})
+
+check('scrolling moves to a different version', () => {
+    panel.win.id_messages.scrollTop = 4000
+    prun('update_time_travel()')
+    const before = prun('travelling_vi')
+    panel.win.id_messages.scrollTop = 30000
+    prun('update_time_travel()')
+    ok(prun('travelling_vi') !== before, 'the same version after scrolling 26,000px')
+})
+
+check('raw messages turns time travel off', () => {
+    panel.win.id_raw_messages.checked = true
+    prun('update_time_travel()')
+    eq(panel.by_id['history_line'].style.display, 'none', 'line display')
+    eq(prun('travelling_vi'), null, 'the line is still following a version')
+    panel.win.id_raw_messages.checked = false
+    panel.win.id_time_travel.checked = false
+})
+
+check('placing a span by hand takes the job off the line', () => {
+    panel.win.id_time_travel.checked = true
+    prun('travelling_vi = null; update_time_travel()')
+    ok(prun('span') !== null, 'the line should have placed a span')
+    prun('select_span(10, 20)')
+    eq([panel.win.id_time_travel.checked, panel.win.id_time_travel.disabled],
+       [false, false], '[checked, disabled]')
+    eq(prun('[span.a, span.b]'), [10, 20], 'the hand-placed span')
+})
+
+check('switching the line on takes the span back', () => {
+    prun('select_span(10, 20)')
+    panel.win.id_time_travel.checked = true
+    prun('toggle_time_travel()')
+    eq(prun('span.a === span.b'), true, 'the line should hold a single version')
+    eq(prun('span.a'), prun('travelling_vi'), 'and it should be the one it crosses')
+    panel.win.id_time_travel.checked = false
+    prun('update_time_travel()')
+})
+
+check('dropping the deleted runs leaves the text at the end of the span', () => {
+    const r = run(`(() => {
+        let a = new Doc('alice'); a.ins(0, 'hello')
+        let at = a.getRemoteVersion().map(x => x.join('-')).sort()
+        let b = new Doc('bob'); b.mergeBytes(a.toBytes())
+        b.ins(5, ' world'); a.mergeBytes(b.toBytes())
+        a.del(0, 5)
+        return [dt_diff_from(a, at).filter(x => x[0] !== -1).map(x => x[1]).join(''),
+                a.get()]
+    })()`)
+    eq(r[0], r[1], 'the diff without deletions should equal the document itself')
+})
+
+check('a diff says who made each change', () => {
+    const d = run(`(() => {
+        let a = new Doc('alice'); a.ins(0, 'hello')
+        let at = a.getRemoteVersion().map(x => x.join('-')).sort()
+        let b = new Doc('bob'); b.mergeBytes(a.toBytes())
+        b.ins(5, ' world'); a.mergeBytes(b.toBytes())
+        a.del(0, 5)                      // alice removes "hello"
+        return dt_diff_from(a, at)
+    })()`)
+    const added = d.filter(x => x[0] === 1)
+    const gone = d.filter(x => x[0] === -1)
+    eq(added.map(x => [x[1], x[2]]), [[' world', 'bob']], 'bob added " world"')
+    // A deletion is attributed to whoever removed it, not whoever wrote it
+    eq(gone.map(x => [x[1], x[2]]), [['hello', 'alice']], 'alice removed "hello"')
+})
+
+check('runs by the same author collapse into one entry', () => {
+    const d = run(`(() => {
+        let d = new Doc('a'); d.ins(0, 'x')
+        let at = d.getRemoteVersion().map(v => v.join('-')).sort()
+        d.ins(1, 'abcdef')
+        return dt_diff_from(d, at)
+    })()`)
+    eq(d.filter(x => x[0] === 1).length, 1, 'six characters by one author should be one run')
+})
+
+check('a diff marks insertions and deletions the right way round', () => {
+    // -1 removed, 0 untouched, 1 added
+    const d = run(`(() => {
+        let doc = new Doc('a')
+        doc.ins(0, 'hello world')
+        let at = doc.getRemoteVersion().map(x => x.join('-')).sort()
+        doc.del(5, 6)              // drop " world"
+        doc.ins(5, '!')            // add "!"
+        return dt_diff_from(doc, at)
+    })()`)
+    const by = st => d.filter(x => x[0] === st).map(x => x[1]).join('')
+    eq(by(1), '!', 'added text')
+    eq(by(-1), ' world', 'removed text')
+    eq(by(0), 'hello', 'untouched text')
+})
+
+// ------------------------------------------- what the page is told, and when
+
+console.log('\nthe page is told things in a usable order')
+
+// panel.js declares these at script scope, so they are not properties of the
+// context and have to be assigned from inside it.
+const sent = []
+panel.ctx.__bc = { postMessage: m => sent.push(m) }
+prun('backgroundConnection = __bc')
+
+check('dragging within one version says nothing to the page', () => {
+    prun('select_span(40, 50)')
+    sent.length = 0
+    prun('select_span(40, 50); select_span(40, 50)')
+    eq(sent.filter(m => m.cmd === 'show_diff').length, 0, 'redundant diffs sent')
 })
 
 // ----------------------------------------------------------------- summary

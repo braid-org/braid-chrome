@@ -521,6 +521,25 @@ class Doc {
         return ret >>> 0;
     }
     /**
+     * What happened between two versions, as operations against the document
+     * as it stood at `from`. This is the same travel `xfSince` performs, with
+     * somewhere other than the present as the destination.
+     * @param {Uint32Array} from
+     * @param {Uint32Array} to
+     * @returns {any}
+     */
+    xfBetween(from, to) {
+        const ptr0 = passArray32ToWasm0(from, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray32ToWasm0(to, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.doc_xfBetween(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
      * @param {Uint32Array} from_version
      * @returns {any}
      */

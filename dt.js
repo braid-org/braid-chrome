@@ -1,7 +1,14 @@
-// wasm-bindgen glue from bo-diamond-types pkg-web/dt.js, with export
-// syntax stripped and import.meta swapped for chrome.runtime, so it
-// loads as a content script
-
+// GENERATED. This is bo-diamond-types' pkg-web/dt.js, with three changes that
+// a Chrome content script requires. Redo all three after every wasm rebuild,
+// and check the result compiles as a *classic* script -- import.meta is legal
+// in an ES module, so an ESM check passes a file Chrome will reject.
+//
+//   1. `export { ... };` re-export statements are deleted outright. Stripping
+//      just the keyword leaves a bare block, which is a syntax error.
+//   2. `export ` is stripped from declarations, which then become globals
+//      shared with the extension's other content scripts.
+//   3. `new URL('dt_bg.wasm', import.meta.url)` becomes
+//      `chrome.runtime.getURL('dt_bg.wasm')`.
 /* @ts-self-types="./dt.d.ts" */
 
 class Branch {
@@ -108,6 +115,7 @@ class Doc {
         wasm.__wbg_doc_free(ptr, 0);
     }
     /**
+     * Apply one remote edit, and bring the document up to date with it.
      * @param {string} agent
      * @param {number} start_seq
      * @param {any} parents
@@ -128,6 +136,26 @@ class Doc {
         var v3 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
         return v3;
+    }
+    /**
+     * Apply a run of remote edits, and bring the document up to date once
+     * at the end.
+     *
+     * Merging is the expensive half of applying an edit, and its cost is
+     * set by how much concurrent history has to be transformed rather than
+     * by how many edits arrive. So merging a run of edits together costs
+     * about what merging one of them does, and applying them one at a time
+     * costs that much per edit.
+     *
+     * Each edit's parents must already be in the oplog, or belong to an
+     * earlier edit in the same run.
+     * @param {any} ops
+     */
+    applyRemoteOps(ops) {
+        const ret = wasm.doc_applyRemoteOps(this.__wbg_ptr, ops);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
     }
     /**
      * @param {number} pos_chars
@@ -227,17 +255,6 @@ class Doc {
         return v2;
     }
     /**
-     * @param {any} since
-     * @returns {any}
-     */
-    getPatches(since) {
-        const ret = wasm.doc_getPatches(this.__wbg_ptr, since);
-        if (ret[2]) {
-            throw takeFromExternrefTable0(ret[1]);
-        }
-        return takeFromExternrefTable0(ret[0]);
-    }
-    /**
      * @returns {any}
      */
     getRemoteVersion() {
@@ -265,6 +282,32 @@ class Doc {
         } finally {
             wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
         }
+    }
+    /**
+     * @param {any} since
+     * @returns {any}
+     */
+    getUpdates(since) {
+        const ret = wasm.doc_getUpdates(this.__wbg_ptr, since);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * The updates covering local versions lo..hi, for a viewer showing a
+     * window onto a long history. Local versions are topologically ordered,
+     * so this is a contiguous slice of the document's past.
+     * @param {number} lo
+     * @param {number} hi
+     * @returns {any}
+     */
+    getUpdatesInSpan(lo, hi) {
+        const ret = wasm.doc_getUpdatesInSpan(this.__wbg_ptr, lo, hi);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @param {Uint32Array} since
@@ -296,6 +339,26 @@ class Doc {
         return ret !== 0;
     }
     /**
+     * The run of sequence numbers from `agent` that this document holds and
+     * that overlaps lo..=hi, returned as [first, last] inclusive. Undefined
+     * if the document holds none of that range.
+     * @param {string} agent
+     * @param {number} lo
+     * @param {number} hi
+     * @returns {Uint32Array | undefined}
+     */
+    knownSeqSpan(agent, lo, hi) {
+        const ptr0 = passStringToWasm0(agent, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.doc_knownSeqSpan(this.__wbg_ptr, ptr0, len0, lo, hi);
+        let v2;
+        if (ret[0] !== 0) {
+            v2 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+            wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        }
+        return v2;
+    }
+    /**
      * @returns {number}
      */
     len() {
@@ -303,7 +366,8 @@ class Doc {
         return ret >>> 0;
     }
     /**
-     * The document's length in characters as of some historical version
+     * The document's length in characters as of some historical version.
+     * Cheaper than getStringAt, since it never builds the text.
      * @param {Uint32Array} version
      * @returns {number}
      */
@@ -374,6 +438,16 @@ class Doc {
         this.__wbg_ptr = ret;
         DocFinalization.register(this, this.__wbg_ptr, this);
         return this;
+    }
+    /**
+     * How many local versions this document holds -- one per character ever
+     * typed or deleted -- so a viewer can size its scrollbar without
+     * materializing anything.
+     * @returns {number}
+     */
+    numLocalVersions() {
+        const ret = wasm.doc_numLocalVersions(this.__wbg_ptr);
+        return ret >>> 0;
     }
     /**
      * @param {any} patches
@@ -580,21 +654,21 @@ class OpLog {
         return v2;
     }
     /**
-     * @param {any} since
      * @returns {any}
      */
-    getPatches(since) {
-        const ret = wasm.oplog_getPatches(this.__wbg_ptr, since);
+    getRemoteVersion() {
+        const ret = wasm.oplog_getRemoteVersion(this.__wbg_ptr);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
         return takeFromExternrefTable0(ret[0]);
     }
     /**
+     * @param {any} since
      * @returns {any}
      */
-    getRemoteVersion() {
-        const ret = wasm.oplog_getRemoteVersion(this.__wbg_ptr);
+    getUpdates(since) {
+        const ret = wasm.oplog_getUpdates(this.__wbg_ptr, since);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
@@ -714,6 +788,12 @@ function __wbg_get_imports() {
             const ret = Error(getStringFromWasm0(arg0, arg1));
             return ret;
         },
+        __wbg___wbindgen_bigint_get_as_i64_d968e41184ae354f: function(arg0, arg1) {
+            const v = arg1;
+            const ret = typeof(v) === 'bigint' ? v : undefined;
+            getDataViewMemory0().setBigInt64(arg0 + 8 * 1, isLikeNone(ret) ? BigInt(0) : ret, true);
+            getDataViewMemory0().setInt32(arg0 + 4 * 0, !isLikeNone(ret), true);
+        },
         __wbg___wbindgen_boolean_get_fa956cfa2d1bd751: function(arg0) {
             const v = arg0;
             const ret = typeof(v) === 'boolean' ? v : undefined;
@@ -728,6 +808,10 @@ function __wbg_get_imports() {
         },
         __wbg___wbindgen_in_aca499c5de7ff5e5: function(arg0, arg1) {
             const ret = arg0 in arg1;
+            return ret;
+        },
+        __wbg___wbindgen_is_bigint_2f76dc55065b4273: function(arg0) {
+            const ret = typeof(arg0) === 'bigint';
             return ret;
         },
         __wbg___wbindgen_is_function_1ff95bcc5517c252: function(arg0) {
@@ -749,6 +833,10 @@ function __wbg_get_imports() {
         },
         __wbg___wbindgen_is_undefined_c05833b95a3cf397: function(arg0) {
             const ret = arg0 === undefined;
+            return ret;
+        },
+        __wbg___wbindgen_jsval_eq_e659fcf7b0e32763: function(arg0, arg1) {
+            const ret = arg0 === arg1;
             return ret;
         },
         __wbg___wbindgen_jsval_loose_eq_db4c3b15f63fc170: function(arg0, arg1) {
@@ -836,6 +924,10 @@ function __wbg_get_imports() {
         },
         __wbg_isArray_0677c962b281d01a: function(arg0) {
             const ret = Array.isArray(arg0);
+            return ret;
+        },
+        __wbg_isSafeInteger_04f36e4056f1b851: function(arg0) {
+            const ret = Number.isSafeInteger(arg0);
             return ret;
         },
         __wbg_iterator_6f722e4a93058b71: function() {
@@ -1294,592 +1386,3 @@ async function __wbg_init(module_or_path) {
     return __wbg_finalize_init(instance, module);
 }
 
-//////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////
-
-// copy of section of https://github.com/braid-org/braid-text/blob/master/index.js v0.2.30
-// dt_get_patches and the dt_parse/cursor functions updated to server.js v0.5.24
-
-// note: returns a doc that needs to be freed
-function dt_get(doc, version, agent = null, anti_version = null) {
-    if (dt_get.last_doc) dt_get.last_doc.free()
-
-    let bytes = doc.toBytes()
-    dt_get.last_doc = doc = Doc.fromBytes(bytes, agent)
-
-    let [_agents, versions, parentss] = dt_parse(bytes)
-    if (anti_version) {
-        var include_versions = new Set()
-        var bad_versions = new Set(anti_version)
-
-        for (let i = 0; i < versions.length; i++) {
-            var v = versions[i].join("-")
-            var ps = parentss[i].map(x => x.join('-'))
-            if (bad_versions.has(v) || ps.some(x => bad_versions.has(x)))
-                bad_versions.add(v)
-            else
-                include_versions.add(v)
-        }
-    } else {
-        var include_versions = new Set(version)
-        var looking_for = new Set(version)
-        var local_version = []
-
-        for (let i = versions.length - 1; i >= 0; i--) {
-            var v = versions[i].join("-")
-            var ps = parentss[i].map(x => x.join('-'))
-            if (looking_for.has(v)) {
-                local_version.push(i)
-                looking_for.delete(v)
-            }
-            if (include_versions.has(v))
-                ps.forEach(x => include_versions.add(x))
-        }
-        local_version.reverse()
-
-        // NOTE: currently used by braid-chrome in dt.js at the bottom
-        dt_get.last_local_version = new Uint32Array(local_version)
-
-        if (looking_for.size) throw new Error(`version not found: ${version}`)
-    }
-
-    let new_doc = new Doc(agent)
-    let op_runs = doc.getOpsSince([])
-
-    let i = 0
-    op_runs.forEach((op_run) => {
-        if (op_run.content) op_run.content = [...op_run.content]
-
-        let len = op_run.end - op_run.start
-        let base_i = i
-        for (let j = 1; j <= len; j++) {
-            let I = base_i + j
-            if (
-                j == len ||
-                parentss[I].length != 1 ||
-                parentss[I][0][0] != versions[I - 1][0] ||
-                parentss[I][0][1] != versions[I - 1][1] ||
-                versions[I][0] != versions[I - 1][0] ||
-                versions[I][1] != versions[I - 1][1] + 1
-            ) {
-                for (; i < I; i++) {
-                    let version = versions[i].join("-")
-                    if (!include_versions.has(version)) continue
-                    let og_i = i
-                    let content = []
-                    if (op_run.content?.[i - base_i]) content.push(op_run.content[i - base_i])
-                    if (!!op_run.content === op_run.fwd)
-                        while (i + 1 < I && include_versions.has(versions[i + 1].join("-"))) {
-                            i++
-                            if (op_run.content?.[i - base_i]) content.push(op_run.content[i - base_i])
-                        }
-                    content = content.length ? content.join("") : null
-
-                    new_doc.mergeBytes(
-                        dt_create_bytes(
-                            version,
-                            parentss[og_i].map((x) => x.join("-")),
-                            op_run.fwd ?
-                                (op_run.content ?
-                                    op_run.start + (og_i - base_i) :
-                                    op_run.start) :
-                                op_run.end - 1 - (i - base_i),
-                            op_run.content ? 0 : i - og_i + 1,
-                            content
-                        )
-                    )
-                }
-            }
-        }
-    })
-    return new_doc
-}
-
-function dt_get_patches(doc, version = null) {
-    if (version && v_eq(version,
-        doc.getRemoteVersion().map((x) => x.join("-")).sort())) {
-        // they want everything past the end, which is nothing
-        return []
-    }
-
-    let bytes = doc.toBytes()
-    doc = Doc.fromBytes(bytes)
-
-    let [_agents, versions, parentss] = dt_parse(bytes)
-
-    let op_runs = []
-    if (version?.length) {
-        let frontier = {}
-        version.forEach((x) => frontier[x] = true)
-        let local_version = []
-        for (let i = 0; i < versions.length; i++)
-            if (frontier[versions[i].join("-")]) local_version.push(i)
-
-        local_version = new Uint32Array(local_version)
-
-        let after_bytes = doc.getPatchSince(local_version)
-        ;[_agents, versions, parentss] = dt_parse(after_bytes)
-        op_runs = doc.getOpsSince(local_version)
-    } else op_runs = doc.getOpsSince([])
-
-    doc.free()
-
-    let i = 0
-    let patches = []
-    op_runs.forEach((op_run) => {
-        let version = versions[i]
-        let parents = parentss[i].map((x) => x.join("-")).sort()
-        let start = op_run.start
-        let end = start + 1
-        if (op_run.content) op_run.content = [...op_run.content]
-        let len = op_run.end - op_run.start
-        for (let j = 1; j <= len; j++) {
-            let I = i + j
-            if (
-                (!op_run.content && op_run.fwd) ||
-                j == len ||
-                parentss[I].length != 1 ||
-                parentss[I][0][0] != versions[I - 1][0] ||
-                parentss[I][0][1] != versions[I - 1][1] ||
-                versions[I][0] != versions[I - 1][0] ||
-                versions[I][1] != versions[I - 1][1] + 1
-            ) {
-                let s = op_run.fwd ?
-                    (op_run.content ?
-                        start :
-                        op_run.start) :
-                    (op_run.start + (op_run.end - end))
-                let e = op_run.fwd ?
-                    (op_run.content ?
-                        end :
-                        op_run.start + (end - start)) :
-                    (op_run.end - (start - op_run.start))
-                patches.push({
-                    version: `${version[0]}-${version[1] + e - s - 1}`,
-                    parents,
-                    unit: "text",
-                    range: op_run.content ? `[${s}:${s}]` : `[${s}:${e}]`,
-                    content: op_run.content?.slice(start - op_run.start, end - op_run.start).join("") ?? "",
-                    start: s,
-                    end: e,
-                })
-                if (j == len) break
-                version = versions[I]
-                parents = parentss[I].map((x) => x.join("-")).sort()
-                start = op_run.start + j
-            }
-            end++
-        }
-        i += len
-    })
-    return patches
-}
-
-function dt_parse(bytes) {
-    let state = dt_make_cursor(bytes)
-
-    let agents = []
-    let versions = []
-    let parentss = []
-
-    while (state.pos < state.bytes.length) {
-        let id = state.bytes[state.pos++]
-        let len = dt_read_varint(state)
-        if (id == 1) {
-        } else if (id == 3) {
-            let goal = state.pos + len
-            while (state.pos < goal) {
-                agents.push(dt_read_string(state))
-            }
-        } else if (id == 20) {
-        } else if (id == 21) {
-            let seqs = {}
-            let goal = state.pos + len
-            while (state.pos < goal) {
-                let part0 = dt_read_varint(state)
-                let has_jump = part0 & 1
-                let agent_i = (part0 >> 1) - 1
-                let run_length = dt_read_varint(state)
-                let jump = 0
-                if (has_jump) {
-                    let part2 = dt_read_varint(state)
-                    jump = part2 >> 1
-                    if (part2 & 1) jump *= -1
-                }
-                let base = (seqs[agent_i] || 0) + jump
-
-                for (let i = 0; i < run_length; i++) {
-                    versions.push([agents[agent_i], base + i])
-                }
-                seqs[agent_i] = base + run_length
-            }
-        } else if (id == 23) {
-            let count = 0
-            let goal = state.pos + len
-            while (state.pos < goal) {
-                let run_len = dt_read_varint(state)
-
-                let parents = []
-                let has_more = 1
-                while (has_more) {
-                    let x = dt_read_varint(state)
-                    let is_foreign = 0x1 & x
-                    has_more = 0x2 & x
-                    let num = x >> 2
-
-                    if (x == 1) {
-                        // no parents (e.g. parent is "root")
-                    } else if (!is_foreign) {
-                        parents.push(versions[count - num])
-                    } else {
-                        parents.push([agents[num - 1], dt_read_varint(state)])
-                    }
-                }
-                parentss.push(parents)
-                count++
-
-                for (let i = 0; i < run_len - 1; i++) {
-                    parentss.push([versions[count - 1]])
-                    count++
-                }
-            }
-        } else {
-            state.pos += len
-        }
-    }
-
-    return [agents, versions, parentss]
-}
-
-function dt_make_cursor(bytes) {
-    let state = {
-        bytes: bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes),
-        pos: 0
-    }
-
-    if (new TextDecoder().decode(state.bytes.subarray(0, 8)) !== "DMNDTYPS") throw new Error("dt parse error, expected DMNDTYPS")
-    state.pos = 8
-
-    if (state.bytes[state.pos++] != 0) throw new Error("dt parse error, expected version 0")
-
-    return state
-}
-
-function dt_read_string(state) {
-    let len = dt_read_varint(state)
-    let s = new TextDecoder().decode(state.bytes.subarray(state.pos, state.pos + len))
-    state.pos += len
-    return s
-}
-
-function dt_read_varint(state) {
-    let result = 0
-    let shift = 0
-    while (true) {
-        if (state.pos >= state.bytes.length) throw new Error("byte array does not contain varint")
-
-        let byte_val = state.bytes[state.pos++]
-        result |= (byte_val & 0x7f) << shift
-        if ((byte_val & 0x80) == 0) return result
-        shift += 7
-    }
-}
-
-function dt_create_bytes(version, parents, pos, del, ins) {
-    if (del) pos += del - 1
-
-    function write_varint(bytes, value) {
-        while (value >= 0x80) {
-            bytes.push((value & 0x7f) | 0x80)
-            value >>= 7
-        }
-        bytes.push(value)
-    }
-
-    function write_string(byte_array, str) {
-        let str_bytes = new TextEncoder().encode(str)
-        write_varint(byte_array, str_bytes.length)
-        for (let x of str_bytes) byte_array.push(x)
-    }
-
-    version = decode_version(version)
-    parents = parents.map(decode_version)
-
-    let bytes = []
-    bytes = bytes.concat(Array.from(new TextEncoder().encode("DMNDTYPS")))
-    bytes.push(0)
-
-    let file_info = []
-    let agent_names = []
-
-    let agents = new Set()
-    agents.add(version[0])
-    for (let p of parents) agents.add(p[0])
-    agents = [...agents]
-
-    //   console.log(JSON.stringify({ agents, parents }, null, 4));
-
-    let agent_to_i = {}
-    for (let [i, agent] of agents.entries()) {
-        agent_to_i[agent] = i
-        write_string(agent_names, agent)
-    }
-
-    file_info.push(3)
-    write_varint(file_info, agent_names.length)
-    for (let x of agent_names) file_info.push(x)
-
-    bytes.push(1)
-    write_varint(bytes, file_info.length)
-    for (let x of file_info) bytes.push(x)
-
-    let branch = []
-
-    if (parents.length) {
-        let frontier = []
-
-        for (let [i, [agent, seq]] of parents.entries()) {
-            let has_more = i < parents.length - 1
-            let mapped = agent_to_i[agent]
-            let n = ((mapped + 1) << 1) | (has_more ? 1 : 0)
-            write_varint(frontier, n)
-            write_varint(frontier, seq)
-        }
-
-        branch.push(12)
-        write_varint(branch, frontier.length)
-        for (let x of frontier) branch.push(x)
-    }
-
-    bytes.push(10)
-    write_varint(bytes, branch.length)
-    for (let x of branch) bytes.push(x)
-
-    let patches = []
-
-    let unicode_chars = ins ? [...ins] : []
-
-    if (ins) {
-        let inserted_content_bytes = []
-
-        inserted_content_bytes.push(0) // ins (not del, which is 1)
-
-        inserted_content_bytes.push(13) // "content" enum (rather than compressed)
-
-        let encoder = new TextEncoder()
-        let utf8Bytes = encoder.encode(ins)
-
-        write_varint(inserted_content_bytes, 1 + utf8Bytes.length)
-        // inserted_content_bytes.push(1 + utf8Bytes.length) // length of content chunk
-        inserted_content_bytes.push(4) // "plain text" enum
-
-        for (let b of utf8Bytes) inserted_content_bytes.push(b) // actual text
-
-        inserted_content_bytes.push(25) // "known" enum
-        let known_chunk = []
-        write_varint(known_chunk, unicode_chars.length * 2 + 1)
-        write_varint(inserted_content_bytes, known_chunk.length)
-        for (let x of known_chunk) inserted_content_bytes.push(x)
-
-        patches.push(24)
-        write_varint(patches, inserted_content_bytes.length)
-        for (let b of inserted_content_bytes) patches.push(b)
-    }
-
-    // write in the version
-    let version_bytes = []
-
-    let [agent, seq] = version
-    let agent_i = agent_to_i[agent]
-    let jump = seq
-
-    write_varint(version_bytes, ((agent_i + 1) << 1) | (jump != 0 ? 1 : 0))
-    write_varint(version_bytes, ins ? unicode_chars.length : del)
-    if (jump) write_varint(version_bytes, jump << 1)
-
-    patches.push(21)
-    write_varint(patches, version_bytes.length)
-    for (let b of version_bytes) patches.push(b)
-
-    // write in "op" bytes (some encoding of position)
-    let op_bytes = []
-
-    if (del) {
-        if (pos == 0) {
-            write_varint(op_bytes, 4)
-        } else if (del == 1) {
-            write_varint(op_bytes, pos * 16 + 6)
-        } else {
-            write_varint(op_bytes, del * 16 + 7)
-            write_varint(op_bytes, pos * 2 + 2)
-        }
-    } else if (unicode_chars.length == 1) {
-        if (pos == 0) write_varint(op_bytes, 0)
-        else write_varint(op_bytes, pos * 16 + 2)
-    } else if (pos == 0) {
-        write_varint(op_bytes, unicode_chars.length * 8 + 1)
-    } else {
-        write_varint(op_bytes, unicode_chars.length * 8 + 3)
-        write_varint(op_bytes, pos * 2)
-    }
-
-    patches.push(22)
-    write_varint(patches, op_bytes.length)
-    for (let b of op_bytes) patches.push(b)
-
-    // write in parents
-    let parents_bytes = []
-
-    write_varint(parents_bytes, ins ? unicode_chars.length : del)
-
-    if (parents.length) {
-        for (let [i, [agent, seq]] of parents.entries()) {
-            let has_more = i < parents.length - 1
-            let agent_i = agent_to_i[agent]
-            write_varint(parents_bytes, ((agent_i + 1) << 2) | (has_more ? 2 : 0) | 1)
-            write_varint(parents_bytes, seq)
-        }
-    } else write_varint(parents_bytes, 1)
-
-    patches.push(23)
-    write_varint(patches, parents_bytes.length)
-    for (let x of parents_bytes) patches.push(x)
-
-    // write in patches
-    bytes.push(20)
-    write_varint(bytes, patches.length)
-    for (let b of patches) bytes.push(b)
-
-    //   console.log(bytes);
-    return bytes
-}
-
-function v_eq(v1, v2) {
-    return v1.length == v2.length && v1.every((x, i) => x == v2[i])
-}
-
-class RangeSet {
-    constructor() {
-        this.ranges = []
-    }
-
-    add_range(low_inclusive, high_inclusive) {
-        if (low_inclusive > high_inclusive) return
-
-        const startIndex = this._bs(mid => this.ranges[mid][1] >= low_inclusive - 1, this.ranges.length, true)
-        const endIndex = this._bs(mid => this.ranges[mid][0] <= high_inclusive + 1, -1, false)
-
-        if (startIndex > endIndex) {
-            this.ranges.splice(startIndex, 0, [low_inclusive, high_inclusive])
-        } else {
-            const mergedLow = Math.min(low_inclusive, this.ranges[startIndex][0])
-            const mergedHigh = Math.max(high_inclusive, this.ranges[endIndex][1])
-            const removeCount = endIndex - startIndex + 1
-            this.ranges.splice(startIndex, removeCount, [mergedLow, mergedHigh])
-        }
-    }
-
-    has(x) {
-        var index = this._bs(mid => this.ranges[mid][0] <= x, -1, false)
-        return index !== -1 && x <= this.ranges[index][1]
-    }
-
-    _bs(condition, defaultR, moveLeft) {
-        let low = 0
-        let high = this.ranges.length - 1
-        let result = defaultR
-        
-        while (low <= high) {
-            const mid = Math.floor((low + high) / 2)
-            if (condition(mid)) {
-                result = mid
-                if (moveLeft) high = mid - 1
-                else low = mid + 1
-            } else {
-                if (moveLeft) low = mid + 1
-                else high = mid - 1
-            }
-        }
-        return result
-    }
-}
-
-//////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////
-
-function dt_diff_from(doc, version) {
-    let doc_at_version = dt_get(doc, version)
-    let s = doc_at_version.get();
-    doc_at_version.free()
-    let a = [...s];
-    let far_left = '';
-    for (let xf of dt_get.last_doc.xfSince(dt_get.last_local_version)) {
-        console.log(`xf = ${JSON.stringify(xf, null, 4)}`);
-        if (xf.kind == "Ins") {
-            a = [].concat(a.slice(0, xf.start), [...xf.content].map((c) => ['+', c, '']), a.slice(xf.start))
-        } else if (xf.kind == "Del") {
-            let removed = a.splice(xf.start, xf.end - xf.start);
-            removed = removed
-                .map((c) => {
-                    if (typeof c === 'string') return c;
-                    if (c[0] === "+") return c[2];
-                    return c[1] + c[2];
-                })
-                .join("");
-
-            if (xf.start == 0) {
-                far_left += removed
-            } else {
-                if (typeof a[xf.start - 1] === 'string')
-                    a[xf.start - 1] = [' ', a[xf.start - 1], '']
-                a[xf.start - 1][2] += removed
-            }
-        }
-    }
-
-    let diff = []
-    if (far_left) diff.push([-1, far_left])
-    for (let aa of a) {
-        if (typeof aa === 'string') {
-            if (diff[diff.length - 1]?.[0] == 0) {
-                diff[diff.length - 1][1] += aa
-            } else {
-                diff.push([0, aa])
-            }
-        } else if (aa[0] == '+') {
-            if (diff[diff.length - 1]?.[0] == 1) {
-                diff[diff.length - 1][1] += aa[1]
-            } else {
-                diff.push([1, aa[1]])
-            }
-        } else {
-            if (diff[diff.length - 1]?.[0] == 0) {
-                diff[diff.length - 1][1] += aa[1]
-            } else {
-                diff.push([0, aa[1]])
-            }
-        }
-
-        if (Array.isArray(aa)) {
-            if (diff[diff.length - 1]?.[0] == -1) {
-                diff[diff.length - 1][1] += aa[2]
-            } else {
-                diff.push([-1, aa[2]])
-            }
-        }
-    }
-
-    return diff;
-}
-
-function encode_version(agent, seq) {
-    return agent + "-" + seq
-}
-
-function decode_version(v) {
-    let m = v.match(/^(.*)-(\d+)$/s)
-    if (!m) throw new Error(`invalid actor-seq version: ${v}`)
-    return [m[1], parseInt(m[2])]
-}

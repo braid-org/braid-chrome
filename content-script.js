@@ -463,7 +463,6 @@ async function handle_subscribe() {
     let last_text_code_points = 0;
 
     let outstandings = make_linklist();
-    let actor_seqs = {}
 
     doc = new Doc(peer);
     sync.cleanups.push(() => { doc?.free(); doc = null })
@@ -562,12 +561,9 @@ async function handle_subscribe() {
           doc.del(commonStart_codePoints + numCodePointsToDelete - 1 - i, 1)
       if (stuffToInsert) doc.ins(commonStart_codePoints, stuffToInsert);
 
-      for (let p of doc.getPatches(v)) {
-        //   console.log(JSON.stringify(p));
-
-        let start_version_seq = decode_version(p.version)[1] - (p.end - p.start - 1)
-        if (p.end - p.start < 1) throw 'unexpected patch with nothing'
-        p.version = [p.version]
+      for (let u of doc.getUpdates(v)) {
+        // An update covers a run of events; its first is named outright
+        let start_version_seq = decode_version(u.first_event)[1]
 
         let ops = {
           retry: true,
@@ -575,22 +571,16 @@ async function handle_subscribe() {
           mode: "cors",
           headers: { "Merge-Type": merge_type },
           repr_type: content_type,
-          version: p.version,
-          parents: p.parents,
-          patches: [
-            {
-              unit: p.unit,
-              range: p.range,
-              content: p.content,
-            },
-          ],
+          version: u.version,
+          parents: u.parents,
+          patches: u.patches,
           peer
         };
         versions.push(ops)
         send_dev_message({ action: "new_version", version: ops })
 
         let outstanding = {
-          version: p.version,
+          version: u.version,
           ac: new AbortController(),
         }
         ops.signal = outstanding.ac.signal
@@ -618,10 +608,12 @@ async function handle_subscribe() {
                 x = x.next
               }
 
-              let new_doc = dt_get(doc, doc.getRemoteVersion().map(v => {
+              let rollback_to = doc.getRemoteVersion().map(v => {
                 if (v[0] === peer) v[1] = start_version_seq - 1
                 return v.join('-')
-              }))
+              })
+              let new_doc = Doc.fromBytes(
+                doc.toBytesAt(doc.remoteToLocalVersion(rollback_to)))
               doc.free()
               doc = new_doc
 
@@ -699,16 +691,20 @@ async function handle_subscribe() {
 
         // And expand it into viz rows, just like a server expands its
         // dt file into updates for the wire
-        for (let p of dt_get_patches(doc, before_remote)) {
-          let new_version = {
-            method: "GET",
-            version: [p.version],
-            parents: p.parents,
-            patches: [{ unit: p.unit, range: p.range, content: p.content }]
-          }
-          versions.push(new_version)
-          send_dev_message({ action: "new_version", version: new_version })
-        }
+        // Hand the devtools the chunk exactly as it arrived, in dt bytes.
+        // It keeps its own copy of the document and expands the chunk
+        // itself, which for a large history is a few hundred kilobytes here
+        // rather than megabytes of expanded versions in tens of thousands of
+        // messages.
+        let bin = ''
+        for (let i = 0; i < update.body.length; i++)
+          bin += String.fromCharCode(update.body[i])
+        send_dev_message({ action: "dt_history", bytes: btoa(bin) })
+
+        // The page's own list still needs them, for the diff view
+        for (let u of doc.getUpdates(before_remote))
+          versions.push({ method: "GET", version: u.version,
+                          parents: u.parents, patches: u.patches })
 
         if (before_v.length) {
           flush_textarea(before_v)
@@ -738,7 +734,7 @@ async function handle_subscribe() {
       }
 
       let v = decode_version(version[0])
-      if (actor_seqs[v[0]]?.has(v[1])) return
+      if (doc.knownSeqSpan(v[0], v[1], v[1])) return
 
       let new_version = {
         method: "GET",
@@ -761,33 +757,36 @@ async function handle_subscribe() {
         var high_seq = v[1]
         var low_seq = v[1] + 1 - patches.reduce((a, b) => a + (b.content?.length ? b.content_codepoints.length : 0) + (b.range[1] - b.range[0]), 0)
 
-        if (!actor_seqs[v[0]]) actor_seqs[v[0]] = new RangeSet()
-        actor_seqs[v[0]].add_range(low_seq, high_seq)
-
         v = encode_version(v[0], low_seq)
 
         let ps = parents
 
+        // Each edit is positioned against the document as it stood at its own
+        // parents, so they can all go in together and be merged once.
+        let ops = []
         let offset = 0
         for (let p of patches) {
           // delete
           let del = p.range[1] - p.range[0]
           if (del) {
-            doc.mergeBytes(dt_create_bytes(v, ps, p.range[0] + offset, del, null))
+            let [va, vs] = decode_version(v)
+            ops.push({ agent: va, seq: vs, parents: ps,
+                       pos: p.range[0] + offset, del })
             offset -= del
-            v = decode_version(v)
-            ps = [`${v[0]}-${v[1] + (del - 1)}`]
-            v = `${v[0]}-${v[1] + del}`
+            ps = [`${va}-${vs + (del - 1)}`]
+            v = `${va}-${vs + del}`
           }
           // insert
           if (p.content?.length) {
-            doc.mergeBytes(dt_create_bytes(v, ps, p.range[1] + offset, 0, p.content))
+            let [va, vs] = decode_version(v)
+            ops.push({ agent: va, seq: vs, parents: ps,
+                       pos: p.range[1] + offset, ins: p.content })
             offset += p.content_codepoints.length
-            v = decode_version(v)
-            ps = [`${v[0]}-${v[1] + (p.content_codepoints.length - 1)}`]
-            v = `${v[0]}-${v[1] + p.content_codepoints.length}`
+            ps = [`${va}-${vs + (p.content_codepoints.length - 1)}`]
+            v = `${va}-${vs + p.content_codepoints.length}`
           }
         }
+        doc.applyRemoteOps(ops)
       } catch (e) {
         errorify(e)
       }

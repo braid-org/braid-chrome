@@ -7,6 +7,23 @@ window.onerror = function (message, source, lineno, colno, error) {
 };
 
 let versions = []
+
+// The panel keeps its own copy of the document. History arrives as dt bytes
+// -- a few hundred kilobytes for a document whose expanded patches would be
+// megabytes -- and every question about it is then answered locally, with no
+// messaging between the panel and the page.
+let dt_doc = null
+let dt_ready = null
+function ensure_dt() {
+    if (!dt_ready) dt_ready = fetch('dt_bg.wasm')
+        .then(r => r.arrayBuffer())
+        .then(buf => { initSync({ module: buf }) })
+    return dt_ready
+}
+function reset_dt_doc() {
+    if (dt_doc) try { dt_doc.free() } catch (e) {}
+    dt_doc = null
+}
 let raw_messages = []
 let headers = {}
 let get_failed = ''
@@ -83,6 +100,11 @@ function add_message(message) {
     //   console.log("Received message in devtools:", message);
 
     if (message.action == 'init') {
+        // A new sync replaces the history rather than adding to it. The old
+        // document has to go with it: keeping it would merge two unrelated
+        // histories into one graph, and would leave the incoming history with
+        // nothing new to report.
+        reset_dt_doc()
         versions = message.versions
         raw_messages = message.raw_messages
         if (message.headers) headers = message.headers
@@ -100,10 +122,26 @@ function add_message(message) {
             }
         }
         if (message.version) versions.push(message.version)
+        // A history dump arrives as one message holding many versions, rather
+        // than a message each, so the view is built once instead of per row
+        if (message.batch) for (let v of message.batch) versions.push(v)
         if (message.override_versions) versions = message.override_versions
         // Only rebuild the view that shows versions. The raw view catches
         // up when its checkbox toggles, which calls update() itself
         if (!id_raw_messages.checked) update()
+    } else if (message.action == 'dt_history') {
+        // A chunk of history in raw dt bytes. Merging it here and expanding it
+        // here costs one message, instead of one per version it contains.
+        ensure_dt().then(() => {
+            if (!dt_doc) dt_doc = new Doc('panel')
+            let bytes = Uint8Array.from(atob(message.bytes), c => c.charCodeAt(0))
+            let before = dt_doc.getRemoteVersion().map(x => x.join('-')).sort()
+            dt_doc.mergeBytes(bytes)
+            for (let u of dt_doc.getUpdates(before.length ? before : null))
+                versions.push({ method: "GET", version: u.version,
+                                parents: u.parents, patches: u.patches })
+            if (!id_raw_messages.checked) update()
+        }).catch(e => console.error('dt_history failed:', e))
     } else if (message.action == 'new_headers') {
         headers = message.headers
         update()
@@ -153,247 +191,13 @@ function raw_update() {
 
     edit_source_d.style.display = (headers['repr-type'] ?? headers['content-type'])?.startsWith('text/html') ? 'flex' : 'none'
 
-    let actor_to_color = {}
-    let actor_color_angles = []
-
-    id_messages.innerHTML = ''
     if (!id_raw_messages.checked && versions?.length) {
-        id_messages.style.display = 'grid'
-        id_messages.style['grid-template-columns'] = 'auto auto auto auto auto 1fr'
-        id_messages.style['align-content'] = 'start'
-        // The chips pad their text down a few pixels; align rows by text
-        // baseline so the padded and unpadded cells still line up
-        id_messages.style['align-items'] = 'baseline'
-
-        id_messages.append(make_html(`<div style="grid-column: span 2;margin-left:10px;margin-top:10px">Version</div>`))
-        id_messages.append(make_html(`<div style="grid-column: span 3;margin-top:10px">Range</div>`))
-        id_messages.append(make_html(`<div style="margin-top:10px">Content</div>`))
-
-        let time_dag_width = 64
-        let time_dag_radius = 6
-
-        let svg_parent = null
-        let version_circles = {}
-
-        // remove duplicate versions
-        if (true) {
-            let seen = {}
-            let good_versions = []
-            for (let v of versions) {
-                let v_string = '' + v.version
-
-                if (seen[v_string]) continue
-                seen[v_string] = true
-                good_versions.push(v)
-            }
-            versions = good_versions
-        }
-
-        // find leaves
-        let leaves = new Set(versions.map(v => '' + v.version))
-        for (let v of versions)
-            if (v.parents) {
-                for (let p of v.parents) leaves.delete(p)
-                leaves.delete('' + v.parents)
-            }
-        if (leaves.size > 1)
-            versions.push({
-                version: 'final merge',
-                parents: [...leaves],
-                patches: []
-            })
-
-        for (let i = 0; i < versions.length; i++) {
-            let v = versions[i]
-            let v_string = '' + v.version
-            let last = i == versions.length - 1
-
-            let my_make_html = (s) => {
-                let d = make_html(s)
-                d.style.cursor = 'pointer'
-                d.onclick = () => {
-                    backgroundConnection.postMessage({ cmd: "show_diff", from_version: !last ? v.version : null });
-                }
-                return d
-            }
-
-            for (let i = 0; i < 6; i++) {
-                id_messages.append(make_html(`<div style="width:10px;height:10px"></div>`))
-            }
-
-            let actor = v_string.split('-')[0]
-            if (!actor_to_color[actor]) {
-                let angle = get_new_angle(actor_color_angles)
-                actor_color_angles.push(angle)
-                actor_to_color[actor] = angle_to_color(angle)
-            }
-
-            let version_circle = my_make_html(`<div style="
-                position: relative;
-                display: block;
-                vertical-align: middle;
-                width: ${time_dag_width}px;
-                height: ${time_dag_radius * 2}px;
-                background-color: transparent;
-                padding-right:10px;"></div>`)
-            version_circles[v_string] = version_circle
-            id_messages.append(version_circle)
-            if (!svg_parent) svg_parent = version_circle
-
-            id_messages.append(my_make_html(`<div style="padding-right:10px;color:${actor_to_color[actor]}">${v_string || 'root'}</div>`))
-
-            if (v.patches.length == 0) {
-                for (let i = 0; i < 4; i++)
-                    id_messages.append(make_html(`<div style="width:10px;height:10px"></div>`))
-            }
-
-            for (let ii = 0; ii < v.patches.length; ii++) {
-                let patch = v.patches[ii]
-
-                if (ii > 0)
-                    for (let i = 0; i < 8; i++)
-                        id_messages.append(make_html(`<div style="width:10px;height:10px"></div>`))
-
-                id_messages.append(my_make_html(`<div style="padding-right:10px"><div style="display:inline-block;color:black;background:rgb(245,245,245);font-family:monospace;padding:2px 4px;border-radius:3px">${patch.unit}</div></div>`))
-                id_messages.append(my_make_html(`<div style="font-family:monospace;padding-right:10px">${patch.unit == 'text' ? patch.range.slice(1, -1) : patch.range}</div>`))
-
-                id_messages.append(my_make_html(`<div style="padding-right:10px">=</div>`))
-
-                let container = my_make_html(`<div style="padding-right:10px"></div>`)
-                if (patch.content) {
-                    let pre = make_html(`<pre style="padding:3px 4px;margin:0px;color:black;background:rgb(245,245,245);font-family:monospace;text-wrap:wrap;border-radius:3px"></pre>`)
-                    pre.textContent = patch.content
-                    container.append(pre)
-                } else {
-                    let range = patch.range.match(/\d+/g)?.map(x => 1 * x)
-                    if (range && range.length == 2 && range[0] != range[1]) container.append(make_html(`<div style="display:inline-block;padding:2px;border-radius:3px;background:rgb(241, 64, 42);color:white;font-size:xx-small;padding-left:3px;padding-right:3px">deleted</div>`))
-                }
-                id_messages.append(container)
-            }
-        }
-        id_messages.append(make_html(`<div style="width:10px;height:10px"></div>`))
-
-        let version_ys = {}
-        let v_to_multiv = {}
-        let actor_to_seqs = {}
-
-        let py = svg_parent?.getBoundingClientRect() || 0
-        if (py) py = py.y + py.height / 2
-
-        function get_real_event(e) {
-            try {
-                let [actor, seq] = decode_version(e)
-                let seqs = actor_to_seqs[actor]
-                if (!seqs?.length) return
-                let lo = 0, hi = seqs.length
-                while (lo < hi) {
-                    let mid = Math.floor((lo + hi) / 2)
-                    if (seqs[mid] < seq) lo = mid + 1
-                    else hi = mid
-                }
-                if (lo < seqs.length)
-                    return actor + '-' + seqs[lo]
-            } catch (e) {}
-        }
-
-        function get_real_parents(parents) {
-            if (!parents?.length) return {'': true}
-            let real_parents = {}
-            for (let p of parents) {
-                let real_p = get_real_event(p)
-                if (!real_p) continue
-                let unchanged = real_p === p
-                real_p = v_to_multiv[real_p]
-                if (!real_p) continue
-                real_parents[real_p] = unchanged
-            }
-            return real_parents
-        }
-
-        let last_x = 0.5
-        let last_x_shadow_r = 0.25
-        let version_xs = {}
-        let last_v = ''
-
-        // Compute all the geometry before appending any SVGs. Reading a
-        // rect right after a DOM mutation forces a reflow of the whole
-        // grid, so interleaving them was O(n²) and pegged the CPU
-        var edges = []
-        for (let i = 0; i < versions.length; i++) {
-            let v = versions[i]
-            let v_string = '' + v.version
-
-            let actor = v_string.split('-')[0]
-            let color = actor_to_color[actor]
-
-            let real_parents = get_real_parents(v.parents)
-            let real_parents_array = Object.keys(real_parents)
-
-            let x = null
-            if (real_parents_array.length === 1 &&
-                real_parents_array[0] === last_v) {
-                x = last_x
-            } else {
-                let r = fastHashToUnit(v_string)
-                x = last_x + last_x_shadow_r + r * (1 - 2 * last_x_shadow_r)
-                if (x > 1) x -= 1
-            }
-            last_v = v_string
-            version_xs[v_string] = last_x = x
-
-            let rect = version_circles[v_string].getBoundingClientRect()
-            let y = (rect.y + rect.height / 2) - py
-            version_ys[v_string] = y
-
-            if (i) {
-                for (let [p, unchanged] of Object.entries(real_parents)) {
-                    edges.push({
-                        x, y, color,
-                        px: version_xs[p],
-                        h: y - version_ys[p],
-                        dashed: !unchanged
-                    })
-                }
-            }
-
-            if (v.version !== 'final merge') {
-                for (let e of v.version) {
-                    v_to_multiv[e] = v_string
-                    try {
-                        let [actor, seq] = decode_version(e)
-                        if (!actor_to_seqs[actor]) actor_to_seqs[actor] = []
-                        sorted_insert(actor_to_seqs[actor], seq)
-                    } catch (err) {}
-                }
-            }
-        }
-
-        for (var e of edges) {
-            svg_parent.append(make_html(`<svg height="${e.h}px" width="${time_dag_width}px" style="pointer-events:none; position: absolute; top: ${e.y - e.h + time_dag_radius}px; left: 0px;">
-                    <line x1="${time_dag_radius + e.x * (time_dag_width - 2 * time_dag_radius)}px" y1="100%" x2="${time_dag_radius + e.px * (time_dag_width - 2 * time_dag_radius)}px" y2="0%" stroke="${e.color}" stroke-width="1px" ${e.dashed ? 'stroke-dasharray="3,3"' : ''} />
-            </svg>`))
-        }
-
-        for (let v of versions) {
-            let v_string = '' + v.version
-
-            let actor = v_string.split('-')[0]
-            let color = actor_to_color[actor]
-
-            let x = version_xs[v_string]
-            let y = version_ys[v_string]
-
-            svg_parent.append(make_html(`<svg height="${time_dag_radius * 2}px" width="${time_dag_radius * 2}px" style="position: absolute; top: ${y}px; left: ${x * (time_dag_width - 2 * time_dag_radius)}px;">
-                    <circle cx="50%" cy="50%" r="50%" stroke-width="0" fill="${color}" />
-            </svg>`))
-        }
-
-        if (versions[versions.length - 1].version === 'final merge') versions.pop()
-
-        // let dd = make_html('<pre></pre>')
-        // dd.textContent = JSON.stringify(v_to_realv, null, 4)
-        // id_messages.append(dd)        
+        layout_history()
+        render_history_window()
     } else if (id_raw_messages.checked && raw_messages?.length) {
+        // Whatever was there is replaced, so the geometry describing it goes
+        layout = null
+        id_messages.innerHTML = ''
         id_messages.style.display = 'block'
 
         let d = document.createElement('pre')
@@ -406,13 +210,18 @@ function raw_update() {
 
         id_messages.append(d)
     } else {
+        layout = null
+        id_messages.innerHTML = ''
         let d = document.createElement('div')
         d.textContent = 'nothing to show'
         d.style.cssText = `margin:10px`
         id_messages.append(d)
     }
 
-    if (was_scrolled_to_bottom) id_messages.scrollTop = id_messages.scrollHeight
+    if (was_scrolled_to_bottom) {
+        id_messages.scrollTop = id_messages.scrollHeight
+        if (layout) render_history_window()
+    }
 }
 
 // dt binary encoding only applies to the dt merge-type, whether chosen
@@ -430,11 +239,431 @@ function isScrolledToBottom(element) {
         && element.scrollHeight - element.scrollTop - element.clientHeight < 3;
 }
 
-function make_html(s) {
-    let d = document.createElement('div')
-    d.innerHTML = s
-    return d.firstChild
+// The history view can run to tens of thousands of versions, which is far more
+// than a browser will lay out at any comfortable speed. So the geometry of the
+// whole history is worked out in plain arrays, and only the rows that fall
+// inside the scroll viewport are ever put into the DOM.
+//
+// Rows are not all the same height, because a patch's content wraps over as
+// many lines as it needs. Nothing is measured off the page to find out how
+// many: the content column is monospace and breaks at exactly the column
+// edge, so the line count follows from the string and the column width. Row
+// tops are then a running total, and the rows crossing the viewport are found
+// by binary search.
+// Leading within a row, at about 1.4x the monospace size the browser picks.
+// Lines of one patch should read as one block.
+const LINE_H = 18
+// The gutter between rows. Separation between versions comes from this rather
+// than from stretching the leading, so a multi-line patch stays a paragraph.
+const ROW_PAD = 10
+const HEADER_H = 34
+const LANE_W = 64
+const DOT_R = 6
+// Rows kept rendered past each edge of the viewport, so that a small scroll
+// reveals rows that are already there.
+const OVERSCAN_PX = 250
+// One string for the monospace cells, shared by the measuring and the drawing
+const MONO = 'font-family:monospace'
+
+// What the last layout pass worked out. Everything the renderer needs to draw
+// any row, without consulting the DOM or the version list again.
+let layout = null
+
+function esc(s) {
+    return ('' + s).replace(/[&<>"]/g, c =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
 }
+
+// The width a string takes in a given style. Used a handful of times per
+// layout, on the longest string in each column, to fix the column widths.
+// Widths have to be fixed: a table that sizes its columns to their contents
+// would need every row in the DOM, which is the thing we are avoiding.
+function measure_text(text, style) {
+    let d = document.createElement('div')
+    d.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;' + style
+    d.textContent = text
+    document.body.append(d)
+    let w = d.offsetWidth
+    d.remove()
+    return w
+}
+
+function longest(strings) {
+    let best = ''
+    for (let s of strings) if (s && s.length > best.length) best = s
+    return best
+}
+
+// A pass over the history builds the geometry of every row. That pass is
+// linear, and on a large document it is long enough to be felt, so it is not
+// redone when all that has happened is that versions were appended: the state
+// it works from lives in the layout object, and a later pass picks it up where
+// the previous one stopped. Anything else -- a new sync, a resize, a version
+// too wide for the columns it was laid out against -- starts over.
+function new_layout() {
+    return {
+        src: versions, n_consumed: 0,
+        vs: [], seen: Object.create(null), leaves: new Set(),
+        rows: [], row_tops: [HEADER_H], row_of: [], circles: [], edges: [],
+        version_xs: {}, version_ys: {}, v_to_multiv: {}, actor_to_seqs: {},
+        actor_to_color: {}, actor_color_angles: [],
+        last_x: 0.5, last_v: '',
+        cols: null, char_w: 0, per_line: 1, widest: { version: '', unit: '', range: '' },
+        // What the imaginary tip added, so it can be taken off again
+        merge: null,
+    }
+}
+
+function layout_history() {
+    let L = layout
+    // Appending to the same array is the case worth continuing from. A new
+    // array means a new sync, and nothing carries over.
+    if (!(L && L.src === versions && versions.length >= L.n_consumed)) L = null
+
+    if (L) {
+        remove_final_merge(L)
+        // A version wider than the columns it would be laid out against
+        // shifts every row that came before it, so that pass is abandoned.
+        if (!extend_layout(L)) L = null
+    }
+    if (!L) {
+        L = new_layout()
+        measure_columns(L)
+        extend_layout(L)
+    }
+    add_final_merge(L)
+    L.height = L.row_tops[L.rows.length]
+    layout = L
+}
+
+// Column widths are fixed. A table that sized its columns to their contents
+// would need every row in the DOM, which is the thing being avoided here.
+function measure_columns(L) {
+    let label_style = 'font-family:Arial,sans-serif;font-size:medium;'
+    L.widest = {
+        version: longest(versions.map(v => '' + v.version || 'root')),
+        unit: longest(versions.flatMap(v => v.patches.map(p => p.unit))) || 'text',
+        range: longest(versions.flatMap(v => v.patches.map(p => range_text(p)))) || '000:000',
+    }
+    L.cols = {
+        version: measure_text(L.widest.version, label_style) + 10,
+        unit: measure_text(L.widest.unit, MONO) + 18,
+        range: measure_text(L.widest.range, MONO) + 18,
+    }
+
+    // How many characters fit across the content column, and so how many
+    // lines a given string of content will take.
+    L.char_w = measure_text('0'.repeat(100), MONO) / 100
+    let content_w = Math.max(60, (id_messages.clientWidth || 800)
+        - LANE_W - L.cols.version - L.cols.unit - L.cols.range - 14 - 24)
+    L.per_line = Math.max(1, Math.floor(content_w / L.char_w))
+}
+
+function range_text(p) {
+    return p.unit == 'text' ? p.range.slice(1, -1) : p.range
+}
+
+// Whether a version still fits the columns. Only a string longer than the
+// longest one seen so far can fail, so measuring is rare.
+function fits_columns(L, v) {
+    let check = (col, str, style, slack) => {
+        if (!str || str.length <= L.widest[col].length) return true
+        if (measure_text(str, style) + slack > L.cols[col]) return false
+        L.widest[col] = str
+        return true
+    }
+    if (!check('version', '' + v.version || 'root',
+               'font-family:Arial,sans-serif;font-size:medium;', 10)) return false
+    for (let p of v.patches) {
+        if (!check('unit', p.unit, MONO, 18)) return false
+        if (!check('range', range_text(p), MONO, 18)) return false
+    }
+    return true
+}
+
+function line_count(L, content) {
+    if (!content) return 1
+    let n = 0
+    for (let line of content.split('\n'))
+        n += Math.max(1, Math.ceil(line.length / L.per_line))
+    return n
+}
+
+// Parents name individual events, but a row can cover a run of them, so a
+// named parent has to be resolved to the row that actually contains it.
+function get_real_event(L, e) {
+    try {
+        let [actor, seq] = decode_version(e)
+        let seqs = L.actor_to_seqs[actor]
+        if (!seqs?.length) return
+        let lo = 0, hi = seqs.length
+        while (lo < hi) {
+            let mid = (lo + hi) >> 1
+            if (seqs[mid] < seq) lo = mid + 1
+            else hi = mid
+        }
+        if (lo < seqs.length) return actor + '-' + seqs[lo]
+    } catch (e) {}
+}
+
+function get_real_parents(L, parents) {
+    if (!parents?.length) return { '': true }
+    let real_parents = {}
+    for (let p of parents) {
+        let real_p = get_real_event(L, p)
+        if (!real_p) continue
+        let unchanged = real_p === p
+        real_p = L.v_to_multiv[real_p]
+        if (!real_p) continue
+        real_parents[real_p] = unchanged
+    }
+    return real_parents
+}
+
+function extend_layout(L) {
+    for (let i = L.n_consumed; i < versions.length; i++) {
+        let v = versions[i]
+        let v_string = '' + v.version
+        // The same version can arrive more than once; show it once.
+        if (L.seen[v_string]) continue
+        if (!fits_columns(L, v)) return false
+        L.seen[v_string] = true
+
+        L.leaves.add(v_string)
+        if (v.parents) {
+            for (let p of v.parents) L.leaves.delete(p)
+            L.leaves.delete('' + v.parents)
+        }
+        place(L, v, v_string)
+    }
+    L.n_consumed = versions.length
+    return true
+}
+
+// Give a version its rows, its column in the lanes, and the edges up to its
+// parents.
+function place(L, v, v_string) {
+    let i = L.vs.length
+    L.vs.push(v)
+
+    let actor = v_string.split('-')[0]
+    if (!L.actor_to_color[actor]) {
+        let angle = get_new_angle(L.actor_color_angles)
+        L.actor_color_angles.push(angle)
+        L.actor_to_color[actor] = angle_to_color(angle)
+    }
+    let color = L.actor_to_color[actor]
+
+    // A version takes one row per patch, and at least one row even when it has
+    // no patches at all. row_tops[r] is the top of row r, and one past the end
+    // is the bottom of the last row.
+    L.row_of[i] = L.rows.length
+    let ps = v.patches
+    let add_row = (pi, lines) => {
+        L.rows.push({ vi: i, pi })
+        L.row_tops.push(L.row_tops[L.rows.length - 1] + LINE_H * lines + ROW_PAD)
+    }
+    if (!ps.length) add_row(0, 1)
+    else for (let k = 0; k < ps.length; k++) add_row(k, line_count(L, ps[k].content))
+
+    // A version whose only parent is the version just above it stays in the
+    // same column; anything else steps sideways by an amount derived from its
+    // own name, so a branch keeps its column for as long as it runs.
+    let real_parents = get_real_parents(L, v.parents)
+    let rpa = Object.keys(real_parents)
+    let x
+    if (rpa.length === 1 && rpa[0] === L.last_v) {
+        x = L.last_x
+    } else {
+        x = L.last_x + 0.25 + fastHashToUnit(v_string) * 0.5
+        if (x > 1) x -= 1
+    }
+    L.last_v = v_string
+    L.version_xs[v_string] = L.last_x = x
+
+    let y = L.row_tops[L.row_of[i]] + ROW_PAD / 2 + (LINE_H - 2 * DOT_R) / 2
+    L.version_ys[v_string] = y
+    L.circles.push({ x, y, color })
+
+    if (i) for (let [pv, unchanged] of Object.entries(real_parents)) {
+        let py = L.version_ys[pv]
+        if (py == null) continue
+        L.edges.push({
+            x, px: L.version_xs[pv], color, dashed: !unchanged,
+            top: py + DOT_R, h: Math.max(1, y - py),
+        })
+    }
+
+    if (v.version !== 'final merge')
+        for (let e of v.version) {
+            L.v_to_multiv[e] = v_string
+            try {
+                let [a, seq] = decode_version(e)
+                if (!L.actor_to_seqs[a]) L.actor_to_seqs[a] = []
+                sorted_insert(L.actor_to_seqs[a], seq)
+            } catch (err) {}
+        }
+}
+
+// A history with more than one leaf has no single tip to draw the lanes into,
+// so it gets an imaginary one that merges them. It depends on the whole leaf
+// set, so each pass takes off the one the pass before it added.
+function add_final_merge(L) {
+    if (L.leaves.size <= 1) return
+    L.merge = { vs: L.vs.length, rows: L.rows.length, edges: L.edges.length,
+                last_x: L.last_x, last_v: L.last_v }
+    place(L, { version: 'final merge', parents: [...L.leaves], patches: [] }, 'final merge')
+}
+
+function remove_final_merge(L) {
+    let m = L.merge
+    if (!m) return
+    L.vs.length = L.row_of.length = L.circles.length = m.vs
+    L.rows.length = m.rows
+    L.row_tops.length = m.rows + 1
+    L.edges.length = m.edges
+    L.last_x = m.last_x
+    L.last_v = m.last_v
+    delete L.version_xs['final merge']
+    delete L.version_ys['final merge']
+    L.merge = null
+}
+
+// The rows and lane segments that fall inside the viewport, and nothing else.
+// Everything is written as one string of HTML per container: setting innerHTML
+// once is far cheaper than appending a few hundred nodes one at a time.
+function render_history_window() {
+    if (!layout) return
+
+    let { vs, rows, row_of, row_tops, circles, edges, cols, actor_to_color } = layout
+
+    let body = document.getElementById('history_body')
+    if (!body) {
+        id_messages.style.display = 'block'
+        id_messages.style.position = 'relative'
+        id_messages.innerHTML =
+            `<div id="history_body" style="position:relative">` +
+            `<div id="history_lanes" style="position:absolute;left:0;top:0;width:${LANE_W}px;height:100%;pointer-events:none"></div>` +
+            `<div id="history_rows"></div></div>`
+
+        body = document.getElementById('history_body')
+
+        // One handler for the whole view, since the rows under it come and go
+        body.onclick = (e) => {
+            let row = e.target.closest?.('[data-vi]')
+            if (!row) return
+            let i = 1 * row.dataset.vi
+            backgroundConnection.postMessage({
+                cmd: "show_diff",
+                from_version: i < vs.length - 1 ? vs[i].version : null
+            })
+        }
+        id_messages.onscroll = () => {
+            if (scroll_render_queued) return
+            scroll_render_queued = true
+            requestAnimationFrame(() => {
+                scroll_render_queued = false
+                render_history_window()
+            })
+        }
+    }
+    body.style.height = layout.height + 'px'
+
+    let y_top = id_messages.scrollTop - OVERSCAN_PX
+    let y_bot = id_messages.scrollTop + id_messages.clientHeight + OVERSCAN_PX
+
+    let lo = 0, hi = rows.length - 1
+    while (lo < hi) {
+        let mid = (lo + hi) >> 1
+        if (row_tops[mid + 1] <= y_top) lo = mid + 1
+        else hi = mid
+    }
+    let first = lo
+    let last = first
+    while (last < rows.length && row_tops[last] < y_bot) last++
+
+    let h = [`<div style="position:absolute;top:12px;left:${LANE_W}px;color:#555">Version</div>`,
+             `<div style="position:absolute;top:12px;left:${LANE_W + cols.version}px;color:#555">Range</div>`,
+             `<div style="position:absolute;top:12px;left:${LANE_W + cols.version + cols.unit + cols.range + 14}px;color:#555">Content</div>`]
+
+    for (let r = first; r < last; r++) {
+        let { vi, pi } = rows[r]
+        let v = vs[vi]
+        let v_string = '' + v.version
+        let color = actor_to_color[v_string.split('-')[0]]
+        h.push(`<div data-vi="${vi}" style="position:absolute;left:0;right:0;` +
+               `top:${row_tops[r] + ROW_PAD / 2}px;` +
+               `height:${row_tops[r + 1] - row_tops[r] - ROW_PAD}px;display:flex;align-items:flex-start;` +
+               `line-height:${LINE_H}px;white-space:pre;cursor:pointer">`)
+        h.push(`<div style="width:${LANE_W}px;flex:none"></div>`)
+        // Only the first row of a version is labelled; the rest of its patches
+        // line up underneath it.
+        h.push(`<div style="width:${cols.version}px;flex:none;color:${color};overflow:hidden;text-overflow:ellipsis">` +
+               (pi === 0 ? esc(v_string || 'root') : '') + `</div>`)
+
+        let patch = v.patches[pi]
+        if (!patch) {
+            h.push(`</div>`)
+            continue
+        }
+        let range = patch.unit == 'text' ? patch.range.slice(1, -1) : patch.range
+        h.push(`<div style="width:${cols.unit}px;flex:none"><span style="color:black;background:rgb(245,245,245);` +
+               `${MONO};padding:2px 4px;border-radius:3px">${esc(patch.unit)}</span></div>`)
+        h.push(`<div style="width:${cols.range}px;flex:none;${MONO}">${esc(range)}</div>`)
+        h.push(`<div style="width:14px;flex:none">=</div>`)
+        if (patch.content != null && patch.content !== '') {
+            // break-all rather than wrapping at spaces, so that where the text
+            // breaks matches the line count the layout worked out
+            h.push(`<div style="flex:1;min-width:0;color:black;background:rgb(245,245,245);` +
+                   `${MONO};padding:0 4px;border-radius:3px;` +
+                   `white-space:pre-wrap;word-break:break-all">` + esc(patch.content) + `</div>`)
+        } else {
+            let nums = patch.range.match(/\d+/g)?.map(x => 1 * x)
+            if (nums && nums.length == 2 && nums[0] != nums[1])
+                h.push(`<div style="flex:none;height:${LINE_H}px;display:flex;align-items:center">` +
+                       `<span style="background:rgb(241,64,42);color:white;font-size:xx-small;` +
+                       `padding:2px 3px;border-radius:3px;line-height:normal">deleted</span></div>`)
+        }
+        h.push(`</div>`)
+    }
+    document.getElementById('history_rows').innerHTML = h.join('')
+
+    // Lanes. A circle is drawn when its row is on screen; an edge is drawn
+    // whenever its span crosses the viewport, which for a merge reaching far
+    // back means it is drawn long after its own row has scrolled away.
+    let g = []
+    for (let e of edges) {
+        if (e.top > y_bot || e.top + e.h < y_top) continue
+        g.push(`<svg height="${e.h}px" width="${LANE_W}px" style="position:absolute;top:${e.top}px;left:0">` +
+               `<line x1="${DOT_R + e.x * (LANE_W - 2 * DOT_R)}" y1="100%" ` +
+               `x2="${DOT_R + e.px * (LANE_W - 2 * DOT_R)}" y2="0%" stroke="${e.color}" ` +
+               `stroke-width="1" ${e.dashed ? 'stroke-dasharray="3,3"' : ''} /></svg>`)
+    }
+    for (let i = first; i < last; i++) {
+        let vi = rows[i].vi
+        if (rows[i].pi !== 0) continue
+        let c = circles[vi]
+        g.push(`<svg height="${DOT_R * 2}" width="${DOT_R * 2}" style="position:absolute;` +
+               `top:${c.y}px;left:${c.x * (LANE_W - 2 * DOT_R)}px">` +
+               `<circle cx="50%" cy="50%" r="50%" stroke-width="0" fill="${c.color}" /></svg>`)
+    }
+    document.getElementById('history_lanes').innerHTML = g.join('')
+}
+let scroll_render_queued = false
+
+// How wide the content column is decides how many lines each patch wraps to,
+// so resizing the panel changes every row's height.
+let resize_timer = null
+window.addEventListener('resize', () => {
+    if (!layout) return
+    clearTimeout(resize_timer)
+    resize_timer = setTimeout(() => {
+        if (!layout) return
+        layout = null
+        layout_history()
+        render_history_window()
+    }, 150)
+})
 
 function get_new_angle(angles) {
     let positions = angles.sort().concat([1]);

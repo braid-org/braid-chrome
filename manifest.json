@@ -59,6 +59,7 @@
       "js": [
         "./content-script.js",
         "./dt.js",
+        "./dt-helpers.js",
         "./myers-diff1.js",
         "./braid-http-client.js",
         "./apply-patch.js",

@@ -326,7 +326,7 @@ function new_layout() {
         vs: [], seen: Object.create(null), leaves: new Set(),
         rows: [], row_tops: [HEADER_H], row_of: [], circles: [], edges: [],
         version_xs: {}, version_ys: {}, v_to_multiv: {}, actor_to_seqs: {},
-        actor_to_color: {}, actor_color_angles: [],
+        actor_to_color: {}, actor_color_angles: [], last_actor_angle: 0,
         last_x: 0.5, last_v: '',
         cols: null, char_w: 0, per_line: 1, widest: { version: '', unit: '', range: '' },
         // What the imaginary tip added, so it can be taken off again
@@ -483,8 +483,9 @@ function place(L, v, v_string) {
 
     let actor = v_string.split('-')[0]
     if (!L.actor_to_color[actor]) {
-        let angle = get_new_angle(L.actor_color_angles)
+        let angle = get_new_angle(L.actor_color_angles, L.last_actor_angle)
         L.actor_color_angles.push(angle)
+        L.last_actor_angle = angle
         L.actor_to_color[actor] = angle_to_color(angle)
     }
     let color = L.actor_to_color[actor]
@@ -944,26 +945,61 @@ window.addEventListener('resize', () => {
     }, 150)
 })
 
-function get_new_angle(angles) {
-    let positions = angles.sort().concat([1]);
-    let best = 0;
-    let biggest = positions[0];
-    for (let i = 0; i < positions.length - 1; i++) {
-        let smaller = positions[i];
-        let bigger = positions[i + 1];
-        if (bigger - smaller > biggest) {
-            best = (bigger + smaller) / 2;
-            biggest = bigger - smaller;
-        }
+// Take the middle of the widest gap, so any number of actors ends up spread
+// around the whole wheel.
+function get_new_angle(angles, last_angle) {
+    if (!angles.length) return 0
+
+    // Copying keeps the caller's array in the order it kept it, which the
+    // bare sort() this used to call did not. The comparator is only for
+    // safety: every angle is a bisection of a turn, so it prints as "0.something"
+    // and sorts the same either way -- but that is luck, not a reason.
+    var sorted = angles.slice().sort((a, b) => a - b).concat([1])
+    var widest = 0
+    for (var i = 0; i < sorted.length - 1; i++)
+        widest = Math.max(widest, sorted[i + 1] - sorted[i])
+
+    // Gaps are usually tied for widest: once every actor has been placed the
+    // wheel is even again, and the next round has its pick. Which one we take
+    // is what went wrong before -- always the leftmost, so each round marched
+    // across the wheel in order and actors arriving one after another came out
+    // adjacent, a rainbow read top to bottom. Two people typing at each other
+    // arrive one after another, so they got the two colors hardest to tell
+    // apart. Break the tie toward the gap furthest from whoever came last.
+    var best = 0, best_dist = -1
+    for (var i = 0; i < sorted.length - 1; i++) {
+        if (sorted[i + 1] - sorted[i] < widest - 1e-9) continue
+        var mid = (sorted[i] + sorted[i + 1]) / 2
+        var dist = Math.abs(mid - last_angle)
+        dist = Math.min(dist, 1 - dist)  // the wheel wraps around
+        if (dist > best_dist) { best_dist = dist; best = mid }
     }
-    return best;
+    return best
 }
 
+// Equal steps of hue are not equal steps of seen difference. At this
+// lightness sRGB holds a vivid blue but only a muddy olive, so the yellows
+// and greens crowd together and need a wider berth than the blues do. These
+// hues sit at even distances around the edge of the gamut in oklab, so an
+// even walk through them is an even walk to the eye. Where the walk starts
+// is a free choice, and this one is picked to keep the first few actors --
+// the ones anybody actually sees -- as far apart as the wheel allows.
+var HUE_WHEEL = [24, 40, 68, 109, 138, 156, 195, 239,
+                 257, 263, 274, 289, 305, 322, 341, 2]
+
 function angle_to_color(angle) {
-    // Hue alone carries identity. Lightness and chroma stay fixed, dark
-    // and vivid enough to read as text on the white background.
-    // The offset starts the first actors at blue, then orange...
-    return `oklch(50% 0.30 ${Math.round(angle * 360 + 250)})`
+    var x = (((angle % 1) + 1) % 1) * HUE_WHEEL.length
+    var i = Math.floor(x)
+    var from = HUE_WHEEL[i % HUE_WHEEL.length]
+    var to = HUE_WHEEL[(i + 1) % HUE_WHEEL.length]
+    if (to < from) to += 360
+    var hue = Math.round(from + (to - from) * (x - i)) % 360
+
+    // Hue alone carries identity, so lightness stays put -- dark enough to
+    // read as text on white. The chroma is past what sRGB can show at any
+    // hue, which hands the browser's gamut mapping the job of finding the
+    // most vivid color of that exact hue and lightness that it can display.
+    return `oklch(50% 0.4 ${hue})`
 }
 
 function decode_version(v) {

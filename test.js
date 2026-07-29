@@ -769,6 +769,97 @@ check('a rolled back history is not answered from memory', () => {
     eq(crun('replay_memory.texts.length'), 1, 'saying so directly should clear them')
 })
 
+// ------------------------------------------------------ telling actors apart
+
+console.log('\nactors get colors that stay apart')
+
+// The panel says an actor's identity in hue alone, so these check the hues it
+// hands out. Perceived difference is not measured here -- that needs a color
+// space these tests have no reason to carry -- but the spacing that produces
+// it is, and the failure that prompted this is a spacing failure: colors
+// arriving in rainbow order, so anyone who turned up next to you looked
+// like you.
+const hue_of = css => Number(css.match(/oklch\(50% [\d.]+ (\d+)\)/)[1])
+const wheel_len = prun('HUE_WHEEL.length')
+
+// Angles are fractions of a turn, so a difference is measured the short way.
+const turn_apart = (a, b) => { const d = Math.abs(a - b) % 1; return Math.min(d, 1 - d) }
+
+function angles_handed_out(n) {
+    const out = []
+    let last = 0
+    for (let i = 0; i < n; i++) {
+        const a = prun(`get_new_angle(${JSON.stringify(out)}, ${last})`)
+        out.push(a)
+        last = a
+    }
+    return out
+}
+
+check('an angle lands in the middle of the widest gap left', () => {
+    // Half the wheel is free between 0.4 and 0.9, and nothing else comes close
+    eq(prun('get_new_angle([0, 0.1, 0.2, 0.4, 0.9], 0)'), 0.65, 'the wide gap')
+})
+
+check('the caller keeps the array it passed, in the order it had it', () => {
+    prun('__angles = [0.5, 0.125, 0]')
+    prun('get_new_angle(__angles, 0)')
+    eq(prun('__angles'), [0.5, 0.125, 0], 'the array handed in')
+})
+
+check('consecutive actors never land in the same neighbourhood', () => {
+    // Before the fix each round of actors marched across the wheel in order
+    // and this fell to a sixteenth of a turn
+    const angles = angles_handed_out(20)
+    let worst = 1
+    for (let i = 1; i < angles.length; i++)
+        worst = Math.min(worst, turn_apart(angles[i - 1], angles[i]))
+    ok(worst >= 0.2, `closest consecutive pair was ${worst.toFixed(3)} of a turn`)
+})
+
+check('no two actors are given the same angle', () => {
+    const angles = angles_handed_out(32)
+    eq(new Set(angles).size, 32, 'distinct angles')
+})
+
+check('however many actors there are, they cover the wheel', () => {
+    for (const n of [2, 3, 5, 8, 13]) {
+        const sorted = angles_handed_out(n).sort((a, b) => a - b)
+        let widest = 1 - sorted[sorted.length - 1] + sorted[0]
+        for (let i = 1; i < sorted.length; i++)
+            widest = Math.max(widest, sorted[i] - sorted[i - 1])
+        // An even spread leaves gaps of 1/n; allow the subdivision twice that
+        ok(widest <= 2 / n + 1e-9,
+           `${n} actors left a ${widest.toFixed(3)} gap, wanted <= ${(2 / n).toFixed(3)}`)
+    }
+})
+
+check('the hue wheel is a wheel: it goes around once, never back', () => {
+    const wheel = prun('HUE_WHEEL')
+    let total = 0
+    for (let i = 0; i < wheel.length; i++) {
+        let step = wheel[(i + 1) % wheel.length] - wheel[i]
+        if (step < 0) step += 360
+        ok(step > 0 && step < 180, `step ${i} of ${step} degrees doubles back`)
+        total += step
+    }
+    eq(total, 360, 'degrees travelled')
+})
+
+check('an angle names one hue, and the whole turn names them all', () => {
+    eq(hue_of(prun('angle_to_color(0)')), prun('HUE_WHEEL[0]'), 'angle 0')
+    eq(prun('angle_to_color(1)'), prun('angle_to_color(0)'), 'a full turn comes home')
+    eq(prun(`angle_to_color(${1 / wheel_len})`),
+       prun('angle_to_color(0)').replace(/ \d+\)/, ` ${prun('HUE_WHEEL[1]')})`),
+       'one wheel step')
+})
+
+check('chroma is past what sRGB holds, so the browser picks the vivid one', () => {
+    // Naming a reachable chroma would make each hue as dull as the dullest
+    const css = prun('angle_to_color(0.3)')
+    ok(/oklch\(50% 0\.4 \d+\)/.test(css), `unexpected color: ${css}`)
+})
+
 // ------------------------------------------- what the page is told, and when
 
 console.log('\nthe page is told things in a usable order')

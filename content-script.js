@@ -73,10 +73,6 @@ try {
   console.log('ReadableStream shim failed: ' + (e?.stack ?? e))
 }
 
-// The author's colour, softened into something text stays readable on. The
-// panel sends the colours the history graph is using, in whatever form it
-// draws them; mixing towards transparent works for any of them. An author the
-// graph has never drawn falls back to a neutral highlight.
 // Bring a character offset into view, if it is not already. The browser is
 // asked where that character lands by laying the same text out in a hidden
 // copy of the box, which is the only way to account for soft wrapping.
@@ -105,11 +101,60 @@ function reveal_offset(el, at) {
   el.scrollTop = Math.max(0, y - el.clientHeight / 2 + line / 2)
 }
 
+// The author's colour, softened into something text stays readable on. The
+// panel sends the colours the history graph is using, in whatever form it
+// draws them; mixing towards transparent works for any of them. An author the
+// graph has never drawn falls back to a neutral highlight.
 function author_tint(colors, agent) {
   let c = colors?.[agent]
   return c ? `color-mix(in oklab, ${c} 22%, transparent)`
            : 'rgba(140, 140, 140, 0.25)'
 }
+
+// Show what a span of history did, in place of the editor, or put the editor
+// back when there is nothing to show. Edits are highlighted in their author's
+// colour, the same one that author has in the history graph, so the text reads
+// as who wrote what, and removed text is struck through and faded.
+//
+// Leaving the deletions out gives the text exactly as it stood at the far end
+// of the span, so it can be read and copied like ordinary text and still says
+// who wrote each part. `at` is a position worth looking at, brought into view
+// if it is off screen.
+function show_diff_view(diff_d, diff, colors, show_deletions, at) {
+  let showing = window.getComputedStyle(diff_d).display !== 'none'
+  let from = showing ? diff_d : textarea
+  let scroll = { vertical: from.scrollTop, horizontal: from.scrollLeft }
+
+  if (!diff) {
+    diff_d.style.display = 'none'
+    textarea.style.display = 'block'
+    textarea.scrollTop = scroll.vertical
+    textarea.scrollLeft = scroll.horizontal
+    return
+  }
+
+  diff_d.style.display = 'block'
+  textarea.style.display = 'none'
+
+  diff_d.innerHTML = ''
+  for (let [what, text, agent] of diff) {
+    if (!text || (what === -1 && !show_deletions)) continue
+    let span = document.createElement('span')
+    if (what) {
+      span.style.backgroundColor = author_tint(colors, agent)
+      if (what === -1) {
+        span.style.textDecoration = 'line-through'
+        span.style.opacity = 0.55
+      }
+    }
+    span.textContent = text
+    diff_d.appendChild(span)
+  }
+  diff_d.scrollTop = scroll.vertical
+  diff_d.scrollLeft = scroll.horizontal
+  reveal_offset(diff_d, at)
+}
+
 var get_parents = () => null
 
 var current_sync = null
@@ -492,6 +537,15 @@ async function handle_subscribe() {
   let diff_d = main_div.querySelector(`.${uniquePrefix}_diff_d`)
   online = main_div.querySelector(`.${uniquePrefix}_online`)
   textarea = main_div.querySelector(`.${uniquePrefix}_textarea`)
+
+  // The panel asks what a span of history did whenever one is selected there.
+  // Replaying the updates answers it for any history that arrives in a
+  // straight line, which is all of them but dt's; dt replaces this below with
+  // something that asks the document itself.
+  on_show_diff = (from_version, to_version, colors, show_deletions, at) =>
+    show_diff_view(diff_d,
+      from_version && replay_diff(versions, from_version, to_version),
+      colors, show_deletions, at)
   // show_editor() replaces the original page with our editor.  We defer
   // calling it until the first subscription update arrives, so that the
   // original page stays visible rather than flashing blank while we wait.
@@ -591,53 +645,14 @@ async function handle_subscribe() {
 
     get_parents = () => doc.getRemoteVersion().map((x) => x.join("-")).sort()
 
-    on_show_diff = (from_version, to_version, colors, show_deletions, at) => {
-      var scrollPos = (window.getComputedStyle(diff_d).display === "none") ? {
-        vertical: textarea.scrollTop,
-        horizontal: textarea.scrollLeft
-      } : {
-        vertical: diff_d.scrollTop,
-        horizontal: diff_d.scrollLeft
-      };
-
-      if (!from_version) {
-        diff_d.style.display = 'none';
-        textarea.style.display = 'block';
-        textarea.scrollTop = scrollPos.vertical
-        textarea.scrollLeft = scrollPos.horizontal
-        return
-      }
-
-      diff_d.style.display = 'block';
-      textarea.style.display = 'none';
-
-      let diffArray = dt_diff_from(doc, from_version, to_version);
-      // Dropping the deleted runs leaves the text exactly as it stood at the
-      // far end of the span, so it can be read and copied like ordinary text,
-      // still coloured by whoever wrote each part.
-      if (!show_deletions) diffArray = diffArray.filter(x => x[0] !== -1);
-      diff_d.innerHTML = '';
-      diffArray.forEach(element => {
-        let [status, text, agent] = element;
-        if (!text) return;
-        let spanElem = document.createElement('span');
-        // Edits are highlighted in their author's colour, the same one that
-        // author has in the history graph, so the text reads as who wrote what.
-        // Struck through and faded is what says removed.
-        if (status) {
-          spanElem.style.backgroundColor = author_tint(colors, agent);
-          if (status === -1) {
-            spanElem.style.textDecoration = 'line-through';
-            spanElem.style.opacity = 0.55;
-          }
-        }
-        spanElem.textContent = text;
-        diff_d.appendChild(spanElem);
-      });
-      diff_d.scrollTop = scrollPos.vertical
-      diff_d.scrollLeft = scrollPos.horizontal
-      reveal_offset(diff_d, at)
-    }
+    // The document holds the whole history and can be asked about any two
+    // points in it directly, which beats replaying anything. It goes away
+    // while a subscription is being replaced, and there is nothing to show
+    // until its replacement has some history in it.
+    on_show_diff = (from_version, to_version, colors, show_deletions, at) =>
+      show_diff_view(diff_d,
+        from_version && doc && dt_diff_from(doc, from_version, to_version),
+        colors, show_deletions, at)
 
     textarea.addEventListener("input", async () => {
       let commonStart = 0;
@@ -1083,6 +1098,7 @@ async function handle_subscribe() {
             }
             versions.pop()
             outstanding_changes.remove(outstanding_change)
+            forget_replayed_history()
             send_dev_message({ action: "new_version", remove_count: start_size - outstanding_changes.size })
 
             textarea.value = last_seen_state = outstanding_change.restore_state
@@ -1194,6 +1210,7 @@ async function handle_subscribe() {
                 if (versions[i] && versions[i].parents[0] == change.version[0]) {
                   versions[i].parents = change.parents
                 }
+                forget_replayed_history()
                 send_dev_message({ action: "new_version", override_versions: versions })
                 break
               }
@@ -1628,6 +1645,146 @@ function apply_patches_and_update_selection(text, patches, textarea) {
   textarea.selectionEnd = sel[1]
 
   return text
+}
+
+// Every merge type but dt hands the client a history already laid out in a
+// straight line: each update is written against the one before it, either as a
+// whole new document or as patches over ranges of the last one. Replaying it
+// answers both questions a diff view asks -- what the text was at some point,
+// and what a span of updates did to it -- without needing a CRDT to merge
+// anything, which is the point of those merge types in the first place.
+//
+// `from` and `to` name updates by version. The span runs from just after
+// `from` through the end of `to`, and the answer is the runs dt_diff_from
+// returns. A history this cannot read as text gives null.
+function replay_diff(versions, from, to) {
+  let i = index_of_version(versions, from)
+  let j = index_of_version(versions, to)
+  if (i < 0 || j < 0 || j < i) return null
+
+  let chars = replay_to(versions, i)
+  if (!chars) return null
+  let text = chars.join('')
+
+  let ops = []
+  for (let k = i + 1; k <= j; k++) {
+    let step = update_ops(versions[k], chars)
+    if (!step) return null
+    // The history graph names an update by its version and colours it by the
+    // first name in there, so its edits are attributed the same way and the
+    // highlight matches the dot the update was selected by.
+    let agent = ('' + versions[k].version).split('-')[0]
+    for (let op of step) {
+      ops.push({ ...op, agent })
+      apply_op(chars, op)
+    }
+  }
+  return diff_from_ops(text, ops)
+}
+
+// Where an update sits in the history. Searched from the end, because the
+// spans people ask about are usually recent ones.
+function index_of_version(versions, version) {
+  let key = '' + version
+  for (let i = versions.length - 1; i >= 0; i--)
+    if ('' + versions[i].version === key) return i
+  return -1
+}
+
+// How many updates apart the remembered texts below are.
+var REPLAY_STEP = 256
+
+// Replaying from the top for every question would walk the whole history each
+// time the mouse moves, so the text is remembered every so often, and a
+// question about a point in the history starts from the nearest memory at or
+// before it. texts[k] is the text after the first k * REPLAY_STEP updates.
+var replay_memory = { versions: null, n: 0, texts: [''] }
+
+// Say that a history has stopped being the one that was replayed, so that
+// nothing remembered about it gets used to answer a question about the new
+// one. Updates are normally only ever added, which the memories survive; this
+// is for the times something already in one is taken back out.
+function forget_replayed_history() {
+  replay_memory = { versions: null, n: 0, texts: [''] }
+}
+
+// The text as it stood after update `i`, as an array of code points, which is
+// what patch positions count. The caller is free to walk it forwards.
+function replay_to(versions, i) {
+  let m = replay_memory
+  // A history that has got shorter has had something taken out of it, and
+  // whoever did that may not have said so.
+  if (m.versions !== versions || versions.length < m.n) {
+    forget_replayed_history()
+    m = replay_memory
+    m.versions = versions
+  }
+  m.n = versions.length
+
+  let c = Math.min(m.texts.length - 1, Math.floor((i + 1) / REPLAY_STEP))
+  let chars = [...m.texts[c]]
+  for (let k = c * REPLAY_STEP; k <= i; k++) {
+    let ops = update_ops(versions[k], chars)
+    if (!ops) return null
+    for (let op of ops) apply_op(chars, op)
+    if ((k + 1) % REPLAY_STEP === 0) m.texts[(k + 1) / REPLAY_STEP] = chars.join('')
+  }
+  return chars
+}
+
+// What one update does to the text before it, as operations in code point
+// positions. An update this cannot read as text gives null.
+function update_ops(update, chars) {
+  let patches = update.patches || []
+  if (!patches.length) return []
+
+  // A patch over the whole document says what the text becomes rather than
+  // what moved, so what it changed is whatever a diff against the text finds.
+  // Snapshot feeds are made entirely of these, and they are also how the first
+  // update of a subscription arrives.
+  if (patches.length === 1 && patches[0].range === '')
+    return diff_ops(chars.join(''), '' + patches[0].content)
+
+  if (!patches.every(p => p.unit === 'text' && /^\[\d+:\d+\]$/.test(p.range)))
+    return null
+
+  // Patch ranges are written against the text as it stood before the update,
+  // so each patch shifts the ones after it along by what it changed.
+  let ops = []
+  let offset = 0
+  let sorted = [...patches].sort((a, b) => parseInt(a.range.slice(1)) - parseInt(b.range.slice(1)))
+  for (let p of sorted) {
+    let [lo, hi] = p.range.match(/\d+/g).map(Number)
+    let content = '' + (p.content ?? '')
+    if (hi > lo) ops.push({ kind: 'Del', start: lo + offset, end: hi + offset })
+    if (content) ops.push({ kind: 'Ins', start: lo + offset, content })
+    offset += count_code_points(content) - (hi - lo)
+  }
+  return ops
+}
+
+// The operations that turn one text into another, at the positions they apply
+// at. A deletion leaves the position where it was, since the text closes up
+// behind it, and an insertion moves past what it wrote.
+function diff_ops(before, after) {
+  let ops = []
+  let pos = 0
+  for (let [what, run] of diff_main(before, after)) {
+    let n = count_code_points(run)
+    if (what === 0) pos += n
+    else if (what === 1) { ops.push({ kind: 'Ins', start: pos, content: run }); pos += n }
+    else ops.push({ kind: 'Del', start: pos, end: pos + n })
+  }
+  return ops
+}
+
+function apply_op(chars, op) {
+  if (op.kind === 'Del') return void chars.splice(op.start, op.end - op.start)
+  // Moved a piece at a time rather than spliced in, for the reason given over
+  // the same thing in diff_from_ops.
+  let tail = chars.splice(op.start, chars.length - op.start)
+  for (let c of op.content) chars.push(c)
+  for (let c of tail) chars.push(c)
 }
 
 async function braid_fetch_wrapper(url, params) {

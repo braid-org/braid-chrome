@@ -678,6 +678,10 @@ function send_span_diff() {
     let lo = Math.min(span.a, span.b), hi = Math.max(span.a, span.b)
     let before = layout.vs[lo].parents?.length ? layout.vs[lo].parents
                                                : layout.vs[lo].version
+    // Nobody ever wrote the final merge, so a span reaching it ends at the
+    // leaves it draws together, which is where the document actually stands.
+    let after = layout.vs[hi].version === 'final merge' ? layout.vs[hi].parents
+                                                       : layout.vs[hi].version
     let key = lo + ':' + hi + ':' + id_show_deletions.checked
     if (key === last_diff) return
     last_diff = key
@@ -685,7 +689,7 @@ function send_span_diff() {
     backgroundConnection?.postMessage({
         cmd: "show_diff",
         from_version: before,
-        to_version: layout.vs[hi].version,
+        to_version: after,
         colors: layout.actor_to_color,
         show_deletions: id_show_deletions.checked,
         at: digits ? 1 * digits[0] : null,

@@ -1,30 +1,35 @@
-// Helpers built on top of dt.js. Kept out of dt.js because that file is
-// generated and gets replaced wholesale whenever diamond-types is rebuilt.
+// Helpers for reading a document's history. dt_diff_from is built on top of
+// dt.js, and is kept out of that file because it is generated and gets
+// replaced wholesale whenever diamond-types is rebuilt.
 
-// What changed between two versions: the text as it stood at `from`, marked up
-// with everything the operations between them inserted and deleted, and who
-// did each of those things. Leaving `to` out asks about the present, which is
-// what a lone version means.
+// What a run of operations did to some text: the text marked up with
+// everything the operations inserted and deleted, and who did each of those
+// things.
 //
-// Returns runs of [what, text, agent], where `what` is 1 for text this span
-// added, -1 for text it removed, and 0 for text it left alone. Deleted text is
-// attributed to whoever deleted it, not to whoever originally wrote it.
-function dt_diff_from(doc, from, to) {
-    // The document answers all of this itself; this used to rebuild a second
-    // copy to ask it.
-    let lv = doc.remoteToLocalVersion(from)
-
+// An operation is {kind, agent, start, end, content}. "Ins" puts `content` in
+// at `start`, "Del" takes out [start, end). Positions count code points, and
+// each operation reads against the text as the ones before it left it.
+//
+// Returns runs of [what, text, agent], where `what` is 1 for text the
+// operations added, -1 for text they removed, and 0 for text they left alone.
+// Deleted text is attributed to whoever deleted it, not to whoever originally
+// wrote it.
+function diff_from_ops(text, ops) {
     // Each character is either untouched, or a cell recording that it was
     // inserted and what was deleted immediately after it.
     //   { c, ins, gone: [[text, agent], ...] }
-    let a = [...doc.getStringAt(lv)].map(c => ({ c, ins: null, gone: null }))
+    let a = [...text].map(c => ({ c, ins: null, gone: null }))
     let far_left = []
 
-    let ops = to ? doc.xfBetween(lv, doc.remoteToLocalVersion(to)) : doc.xfSince(lv)
     for (let xf of ops) {
         if (xf.kind == "Ins") {
-            a.splice(xf.start, 0,
-                ...[...xf.content].map(c => ({ c, ins: xf.agent, gone: null })))
+            // Moved a piece at a time rather than spliced in: handing splice a
+            // document's worth of characters as an argument list overflows the
+            // stack, and an operation that writes a whole document is exactly
+            // what a snapshot of one turns into.
+            let tail = a.splice(xf.start, a.length - xf.start)
+            for (let c of xf.content) a.push({ c, ins: xf.agent, gone: null })
+            for (let cell of tail) a.push(cell)
         } else if (xf.kind == "Del") {
             // Whatever those cells held, plus anything already deleted after
             // them, is now deleted by this operation's author.
@@ -55,6 +60,17 @@ function dt_diff_from(doc, from, to) {
         for (let [text, agent] of cell.gone || []) push(-1, text, agent)
     }
     return diff
+}
+
+// What changed between two versions: the text as it stood at `from`, marked up
+// with everything the operations between them did to it. Leaving `to` out asks
+// about the present, which is what a lone version means.
+function dt_diff_from(doc, from, to) {
+    // The document answers all of this itself; this used to rebuild a second
+    // copy to ask it.
+    let lv = doc.remoteToLocalVersion(from)
+    return diff_from_ops(doc.getStringAt(lv),
+        to ? doc.xfBetween(lv, doc.remoteToLocalVersion(to)) : doc.xfSince(lv))
 }
 
 function encode_version(agent, seq) {

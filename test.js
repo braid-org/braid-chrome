@@ -9,10 +9,12 @@
 // is legal in a module, so checking dt.js as one would pass a file Chrome
 // refuses to run.
 //
-// The two things worth guarding are the transformations dt.js needs after
-// every diamond-types rebuild, which have broken silently before, and the
-// history view's layout, which computes row geometry in plain arrays and must
-// give the same answer whether it built it all at once or a version at a time.
+// Three things are worth guarding: the transformations dt.js needs after every
+// diamond-types rebuild, which have broken silently before; the history view's
+// layout, which computes row geometry in plain arrays and must give the same
+// answer whether it built it all at once or a version at a time; and reading a
+// history that did not come from dt, which has to arrive at the same text dt
+// itself would.
 
 const fs = require('fs')
 const vm = require('vm')
@@ -94,11 +96,15 @@ function make_window() {
         backgroundConnection: { postMessage() {} },
         navigator: { userAgent: 'test' },
         location: { href: 'about:blank' },
+        // Present, and without the Firefox marking that makes content-script.js
+        // put its own in place of it.
+        ReadableStream: class {},
         chrome: {
             runtime: {
                 getURL: f => path.join(DIR, f),
                 connect: () => ({ postMessage() {}, onMessage: { addListener() {} } }),
                 onMessage: { addListener() {} },
+                sendMessage() {},
             },
             devtools: { inspectedWindow: { tabId: 1 } },
         },
@@ -595,6 +601,157 @@ check('a diff marks insertions and deletions the right way round', () => {
     eq(by(1), '!', 'added text')
     eq(by(-1), ' world', 'removed text')
     eq(by(0), 'hello', 'untouched text')
+})
+
+// ------------------------------------ reading a history that is not dt's
+
+console.log('\na straight-line history replays into the same kind of diff')
+
+// content-script.js reads these histories itself, since the merge types that
+// send them do not have a document to ask.
+const page = make_window()
+check('content-script.js loads', () => {
+    load(page.ctx, 'content-script.js')
+    load(page.ctx, 'dt-helpers.js')
+    load(page.ctx, 'myers-diff1.js')
+    ok(typeof page.ctx.replay_diff === 'function', 'replay_diff is not defined')
+})
+
+const crun = js => vm.runInContext(js, page.ctx)
+const body = (v, text) => ({ version: [v], patches: [{ unit: 'body', range: '', content: text }] })
+const edit = (v, parents, patches) =>
+    ({ version: [v], parents, patches: patches.map(p => ({ unit: 'text', ...p })) })
+
+// What a simpleton client is sent: a snapshot to start on, then patches.
+page.ctx.__simpleton = [
+    body('server-0', 'hello'),
+    edit('alice-3', ['server-0'], [{ range: '[5:5]', content: ' world' }]),
+    edit('bob-9', ['alice-3'], [{ range: '[0:1]', content: 'H' }]),
+]
+
+check('one update says what that one edit did', () => {
+    eq(crun(`replay_diff(__simpleton, ['server-0'], ['alice-3'])`),
+       [[0, 'hello', null], [1, ' world', 'alice']], 'alice appended " world"')
+})
+
+check('a span says what all of its updates did', () => {
+    const d = crun(`replay_diff(__simpleton, ['server-0'], ['bob-9'])`)
+    const by = st => d.filter(x => x[0] === st).map(x => [x[1], x[2]])
+    eq(by(1), [['H', 'bob'], [' world', 'alice']], 'added text and who added it')
+    eq(by(-1), [['h', 'bob']], 'bob lowered the h by replacing it')
+    eq(by(0), [['ello', null]], 'untouched text')
+})
+
+check('a span starts from the text as it stood before it', () => {
+    eq(crun(`replay_diff(__simpleton, ['alice-3'], ['bob-9']).map(x => x[1]).join('')`),
+       'hHello world', 'the deleted h, then the text bob left behind')
+})
+
+check('several patches in one update shift each other along', () => {
+    page.ctx.__multi = [
+        body('server-0', 'abcdef'),
+        edit('alice-1', ['server-0'], [{ range: '[1:2]', content: '' },
+                                       { range: '[4:4]', content: 'XY' }]),
+    ]
+    eq(crun(`replay_diff(__multi, ['server-0'], ['alice-1'])
+                 .filter(x => x[0] !== -1).map(x => x[1]).join('')`),
+       'acdXYef', 'both patches read against the text before the update')
+})
+
+check('a snapshot feed is diffed against the snapshot before it', () => {
+    page.ctx.__snapshots = [body('a-0', 'cat'), body('b-1', 'cart'), body('c-2', 'cars')]
+    eq(crun(`replay_diff(__snapshots, ['a-0'], ['b-1'])`),
+       [[0, 'ca', null], [1, 'r', 'b'], [0, 't', null]], 'b inserted the r')
+    const d = crun(`replay_diff(__snapshots, ['a-0'], ['c-2'])`)
+    eq(d.filter(x => x[0] === -1).map(x => [x[1], x[2]]), [['t', 'c']], 'c removed the t')
+})
+
+// The patches a simpleton client is sent are dt's own, transformed into that
+// client's line of time. Replaying them has to land on the text dt itself
+// holds, or this view is reading a history differently from the document that
+// wrote it.
+check("replaying dt's transformed patches lands on dt's own text", () => {
+    ok(engine_ready, 'the wasm did not initialize')
+    // A server merging two peers who keep colliding, telling one client about
+    // everything it has not seen since the last time it was told.
+    const out = run(`(() => {
+        let server = new Doc('server'), a = new Doc('alice'), b = new Doc('bob')
+        let updates = [], n = 0
+        let words = ['the ', 'quick ', 'brown ', 'fox ', 'jumps ', 'over ', 'a ', 'log ']
+        for (let i = 0; i < words.length; i++) {
+            a.mergeBytes(server.toBytes())
+            b.mergeBytes(server.toBytes())
+            a.ins(Math.min(i * 3, a.len()), words[i])
+            b.ins(0, String(i))
+            if (b.len() > 6) b.del(3, 2)
+            let seen = server.getLocalVersion()
+            server.mergeBytes(a.toBytes())
+            server.mergeBytes(b.toBytes())
+            let patches = server.getXFPatches(seen)
+            if (patches.length) updates.push({ version: ['peer-' + (n++)], patches })
+        }
+        return { updates, final: server.get() }
+    })()`)
+    ok(out.updates.length > 4, 'the run should have produced several updates')
+    ok(out.updates.some(u => u.patches.length > 1), 'a merge should have sent several patches')
+
+    page.ctx.__xf = JSON.parse(JSON.stringify(out.updates))
+    eq(crun(`replay_to(__xf, __xf.length - 1).join('')`), out.final, 'the replayed text')
+})
+
+check('a history it cannot read as text says so', () => {
+    page.ctx.__structural = [
+        body('a-0', '{"x":1}'),
+        { version: ['b-1'], parents: ['a-0'],
+          patches: [{ unit: 'json', range: '.x', content: '2' }] },
+    ]
+    eq(crun(`replay_diff(__structural, ['a-0'], ['b-1'])`), null, 'a json path patch')
+    eq(crun(`replay_diff(__simpleton, ['nobody-0'], ['bob-9'])`), null, 'an unknown version')
+    eq(crun(`replay_diff(__simpleton, ['bob-9'], ['alice-3'])`), null, 'a span running backwards')
+})
+
+// Replaying is remembered every REPLAY_STEP updates so that dragging does not
+// walk the history from the top on every frame. What it remembers has to give
+// the same answers as replaying it cold, whichever order it is asked in.
+check('a history longer than one memory gives the same answers', () => {
+    // Each update writes a different letter, so a text replayed from the wrong
+    // place reads differently rather than only being a different length.
+    page.ctx.__long = [body('server-0', '')].concat(
+        Array.from({ length: 900 }, (_, i) =>
+            edit(`alice-${i}`, [i ? `alice-${i - 1}` : 'server-0'],
+                 [{ range: `[${i}:${i}]`, content: 'abcdefg'[i % 7] }])))
+
+    const ask = at => JSON.stringify(
+        crun(`replay_diff(__long, ['alice-${at - 1}'], ['alice-${at}'])`))
+    const cold = at => { crun('forget_replayed_history()'); return ask(at) }
+    const expected = [700, 300, 899].map(cold)
+
+    crun('forget_replayed_history()')
+    eq([700, 300, 899].map(ask), expected,
+       'asked forwards, then backwards, then forwards again')
+    ok(crun('replay_memory.texts.length') > 1, 'nothing was remembered')
+})
+
+// A history only ever grows, except when a write is refused and the updates it
+// was built on are taken back out. Those places say so, and a history that has
+// got shorter is caught anyway.
+check('a rolled back history is not answered from memory', () => {
+    const ask = () => JSON.stringify(
+        crun(`replay_diff(__long, ['alice-897'], ['alice-899'])`))
+
+    crun('forget_replayed_history()')
+    const whole = ask()
+    ok(crun('replay_memory.texts.length') > 1, 'nothing was remembered to go stale')
+
+    // Taking an update back out of the middle moves every one after it along
+    crun(`__long.splice(600, 1)`)
+    const warm = ask()
+    crun('forget_replayed_history()')
+    eq(warm, ask(), 'the shortened history should have been replayed afresh')
+    ok(warm !== whole, 'removing an update should have changed what the span shows')
+
+    crun('forget_replayed_history()')
+    eq(crun('replay_memory.texts.length'), 1, 'saying so directly should clear them')
 })
 
 // ------------------------------------------- what the page is told, and when

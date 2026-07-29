@@ -4,18 +4,20 @@ let latest_request_headers_for_tab = {}
 let latest_headers_for_tab = {}
 let tab_to_last_dev_message = {}
 
+function send_loaded(tabid, url) {
+  chrome.tabs.sendMessage(tabid, {
+    cmd: 'loaded',
+    request_headers: latest_request_headers_for_tab[tabid],
+    headers: latest_headers_for_tab[tabid],
+    dev_message: tab_to_last_dev_message[tabid],
+    url,
+    panel_open: !!tab_to_dev[tabid]
+  })
+}
+
 chrome.tabs.onUpdated.addListener(function callback(tabid, info, tab) {
   // Check if tab update status is 'complete'
-  if (info.status === 'complete') {
-    chrome.tabs.sendMessage(tabid, {
-      cmd: 'loaded',
-      request_headers: latest_request_headers_for_tab[tabid],
-      headers: latest_headers_for_tab[tabid],
-      dev_message: tab_to_last_dev_message[tabid],
-      url: tab.url,
-      panel_open: !!tab_to_dev[tabid]
-    })
-  }
+  if (info.status === 'complete') send_loaded(tabid, tab.url)
 })
 
 chrome.webRequest.onSendHeaders.addListener(
@@ -68,6 +70,13 @@ chrome.runtime.onConnect.addListener((port) => {
 })
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // A content script announcing itself. It cannot have started before the
+  // response headers arrived — the browser needs them to begin parsing — so
+  // asking at this moment always finds them, where tabs.onUpdated can report
+  // 'complete' before onHeadersReceived has even run and find nothing.
+  if (message.cmd === 'ready')
+    return send_loaded(sender.tab.id, sender.tab.url)
+
   if (tab_to_dev[sender.tab.id]) {
     console.log(`sending message: ${JSON.stringify(message)}`)
     tab_to_dev[sender.tab.id].postMessage(message)

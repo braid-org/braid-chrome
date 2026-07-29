@@ -25,6 +25,54 @@ var doc = null
 var default_version_count = 1
 var on_show_diff = () => { }
 
+// Firefox never gives a content script's sandbox its own ReadableStream, so
+// the name resolves up the prototype chain to the page's, and that constructor
+// runs in the page's realm — where our underlying source object is off limits.
+// braid-http's multiplexer dies building its fake response, with "Permission
+// denied to access property autoAllocateChunkSize" (bugzilla 1757836, open
+// since Firefox 99). Both primings the bug suggests are MV2-only.
+//
+// So hand the sandbox a ReadableStream of its own, and the lookup stops here
+// instead of reaching the page. A TransformStream built with no arguments
+// gives the page's realm nothing to read, and its readable end is a real
+// stream that our sandbox-local Response accepts. Only the sliver of the API
+// braid-http asks for is covered: a start callback fed enqueue/close/error.
+// Chrome has no sandbox, no xray, and takes none of this.
+//
+// Two things that look like they should work, and don't: priming the sandbox
+// the way bug 1757836 suggests (MV2 only — MV3 dropped the sandbox's own
+// fetch), and borrowing the constructor off `new Response('').body`, whose
+// stream turns out to be the page's too.
+try {
+  if ('wrappedJSObject' in ReadableStream) {
+    globalThis.ReadableStream = function (source) {
+      // The page's own TransformStream, reached without xray vision. An xrayed
+      // one hands back xrayed promises, and reading `.then` off one of those
+      // from in here is denied (bugzilla 1750290) — which is what awaiting a
+      // read from this stream ends up doing.
+      var TS = window.wrappedJSObject?.TransformStream ?? TransformStream
+      var ts = new TS()
+      var writer = ts.writable.getWriter()
+      source?.start?.({
+        // The chunk has to belong to the page before it is allowed through
+        // the page's stream: written as it is, a sandbox Uint8Array reads back
+        // out as undefined, while a cloned one arrives whole and still
+        // iterable, which is what braid-http walks it as.
+        enqueue: chunk => {
+          var theirs = (chunk !== null && typeof chunk === 'object')
+                       ? cloneInto(chunk, window) : chunk
+          writer.write(theirs).catch(() => {})
+        },
+        close: () => { writer.close().catch(() => {}) },
+        error: e  => { writer.abort(e).catch(() => {}) },
+      })
+      return ts.readable
+    }
+  }
+} catch (e) {
+  console.log('ReadableStream shim failed: ' + (e?.stack ?? e))
+}
+
 // The author's colour, softened into something text stays readable on. The
 // panel sends the colours the history graph is using, in whatever form it
 // draws them; mixing towards transparent works for any of them. An author the
@@ -70,6 +118,10 @@ var current_sync = null
 var nav_content_type = null
 var nav_merge_type = null
 
+// The url we have already set ourselves up for, so the second of the two
+// 'loaded' messages does not tear that down and build it again
+var last_loaded_url = null
+
 var is_chrome_showing_media = false
 
 window.errorify = (msg) => {
@@ -85,7 +137,11 @@ window.errorify = (msg) => {
 function send_dev_message(m) {
   try {
     chrome.runtime.sendMessage(m)
-  } catch (e) { window.errorify(e) }
+  } catch (e) {
+    console.log(`send_dev_message could not send action=${m?.action}`
+                + ` keys=[${Object.keys(m ?? {})}]: ${e}`)
+    window.errorify(e)
+  }
 }
 
 function on_bytes_received(s) {
@@ -205,7 +261,10 @@ function record_raw(s) {
 // those as bytes
 function record_response(response) {
   headers = {}
-  for (let x of response.headers.entries()) headers[x[0].toLowerCase()] = x[1]
+  // forEach rather than for-of over .entries(): Firefox content scripts don't
+  // expose Symbol.iterator on the iterator Headers hands back, so for-of dies
+  // with "not iterable" there while working fine in Chrome.
+  response.headers.forEach((value, name) => headers[name.toLowerCase()] = value)
   send_dev_message({ action: "new_headers", headers })
 
   var status_text = {200: 'OK', 209: 'Multiresponse'}[response.status] ?? ''
@@ -260,14 +319,27 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     else
       connect(request)
   } else if (request.cmd == 'loaded') {
+    // Our 'ready' and the background's tabs.onUpdated both ask for this, and
+    // either can arrive first. Once one has come bearing headers the page is
+    // set up, and a second would only take it apart and build it again. One
+    // that arrives without headers settles nothing, so it claims nothing.
+    if (request.headers && last_loaded_url === request.url) return
+    if (request.headers) last_loaded_url = request.url
+
+    // Standing down without headers is the right answer; throwing on the
+    // missing object is not, and that is what used to happen here.
+    if (!request.headers)
+      console.log(`braid: no response headers for this navigation`)
+    var res_headers = request.headers ?? {}
+
     nav_content_type =
-      request.headers?.['repr-type']?.split(/[;,]/)[0] ||
-      request.headers?.['content-type']?.split(/[;,]/)[0] ||
+      res_headers['repr-type']?.split(/[;,]/)[0] ||
+      res_headers['content-type']?.split(/[;,]/)[0] ||
       request.request_headers?.accept?.split(/[;,]/)[0]
-    nav_merge_type = request.headers['merge-type']
+    nav_merge_type = res_headers['merge-type']
 
     headers = {}
-    for (let x of Object.entries(request.headers)) headers[x[0]] = x[1]
+    for (let x of Object.entries(res_headers)) headers[x[0]] = x[1]
 
     // Only take over pages whose response headers advertise Braid.
     // Braidify always Varies on Subscribe; braid-text adds the rest.
@@ -284,6 +356,17 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     // A dev_message means devtools explicitly asked to connect this tab,
     // which overrides the sniff
     if (!braidly && !request.dev_message) return
+
+    // Everything past here reads and replaces document.body, and we may have
+    // been told about this page before the parser has made one — we ask for
+    // the headers the moment the content script runs, which is earlier than
+    // the tab reporting itself complete used to be.
+    if (!document.body) await new Promise(done => {
+      var o = new MutationObserver(() => {
+        if (document.body) { o.disconnect(); done() }
+      })
+      o.observe(document.documentElement, { childList: true })
+    })
 
     is_chrome_showing_media =
       // showing an image..
@@ -626,15 +709,19 @@ async function handle_subscribe() {
           version: u.version,
           ac: new AbortController(),
         }
-        ops.signal = outstanding.ac.signal
         outstandings.push(outstanding)
         textarea.style.caretColor = 'red'
 
         rest()
         async function rest() {
           try {
-            await braid_fetch_wrapper(window.location.href, ops);
-            outstandings.remove(ops)
+            // The request gets a copy. braid_fetch adds an AbortSignal and
+            // swaps the headers for a Headers object, and neither of those
+            // survives the structured clone that carries `versions` over to
+            // the devtools panel — so the record we keep stays plain data.
+            await braid_fetch_wrapper(window.location.href,
+                                      {...ops, signal: outstanding.ac.signal});
+            outstandings.remove(outstanding)
           } catch (e) {
             if (is_access_denied(e)) {
               let x = outstanding
@@ -974,14 +1061,15 @@ async function handle_subscribe() {
           retry: true,
           version, parents, patches,
           peer,
-          signal: outstanding_change.ac.signal,
         }
         versions.push(ops)
         send_dev_message({ action: "new_version", version: ops })
 
         textarea.style.caretColor = 'red'
         try {
-          await braid_fetch_wrapper(window.location.href, ops)
+          // A copy for the request, for the reason given in the dt path above
+          await braid_fetch_wrapper(window.location.href,
+                                    {...ops, signal: outstanding_change.ac.signal})
           outstanding_changes.remove(outstanding_change)
         } catch (e) {
           if (is_access_denied(e)) {
@@ -1317,9 +1405,10 @@ function setupDragAndDrop() {
 
 async function constructHTTPRequest(url, params) {
   let httpRequest = `${params.method ?? 'GET'} ${url}\r\n`
-  for (var pair of params.headers.entries()) {
-    httpRequest += `${pair[0]}: ${pair[1]}\r\n`
-  }
+  // forEach, not for-of over .entries() — see record_response above for why
+  params.headers.forEach((value, name) => {
+    httpRequest += `${name}: ${value}\r\n`
+  })
   httpRequest += '\r\n';
   if (['POST', 'PATCH', 'PUT'].includes(params.method?.toUpperCase()) && params.body) {
     httpRequest += typeof params.body === 'string' ? params.body : body_as_text_or_marker(params.body instanceof Uint8Array ? params.body : new Uint8Array(params.body instanceof Blob ? new Uint8Array(await params.body.arrayBuffer()) : ArrayBuffer.isView(params.body) ? params.body.buffer : new Uint8Array(binary)))
@@ -1699,3 +1788,9 @@ function make_html(html) {
   x.innerHTML = html
   return x.firstChild
 }
+
+// Ask the background for this navigation's headers. It also volunteers them on
+// tabs.onUpdated, but Firefox can report 'complete' before onHeadersReceived
+// has run, and then it has nothing to send. We are only running at all because
+// the headers already arrived, so asking now always finds them.
+chrome.runtime.sendMessage({ cmd: 'ready' })

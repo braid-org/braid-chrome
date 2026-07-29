@@ -1,7 +1,7 @@
 
 chrome.devtools.panels.create(
     "Braid",
-    "128.png",
+    "braid-b-32.png",
     "panel.html",
     function(panel) {
         // console.log('panel created')

@@ -19,9 +19,29 @@ See the release [Demo Video](https://braid.org/video/https://invisiblecollege.s3
 ## Installation
 
 1. `git clone https://github.com/braid-org/braid-chrome.git`
+
+### Chrome
+
 2. Open chrome://extensions in chrome
 3. Click "Load unpacked"
 4. Choose the `braid-chrome` directory you just created
+
+### Firefox
+
+2. Open about:debugging#/runtime/this-firefox in firefox
+3. Click "Load Temporary Add-on…"
+4. Choose the `manifest.json` inside the `braid-chrome` directory
+
+Firefox forgets a temporary add-on when it quits, so this is once per session.
+There is a "Reload" button beside it for after you edit the source.
+
+Firefox needs version 140 or newer, and it hands out host permissions only when
+asked: click the extensions button in the toolbar, pick Braid, and allow it on
+the site you are visiting, or the page will simply load as it normally would.
+
+Firefox also renders `application/json` with a viewer of its own, which builds
+itself after we have taken the page over and puts its own view back. To edit
+json resources, set `devtools.jsonview.enabled` to false in about:config.
 
 Try it out at https://dt.braid.org/foo.txt.  You probably have to click the
 extension and make sure it has permissions to load on dt.braid.org.

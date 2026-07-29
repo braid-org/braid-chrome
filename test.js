@@ -527,6 +527,21 @@ check('switching the line on takes the span back', () => {
     prun('update_time_travel()')
 })
 
+check('switching the line off lets go of the span it held', () => {
+    panel.win.id_time_travel.checked = true
+    prun('travelling_vi = null; update_time_travel()')
+    ok(prun('span') !== null, 'the line should have placed a span')
+    panel.win.id_time_travel.checked = false
+    prun('toggle_time_travel()')
+    eq(prun('span'), null, 'the span outlived the line')
+})
+
+check('a span placed by hand outlives the line being redrawn', () => {
+    prun('select_span(10, 20)')
+    prun('update_time_travel()')
+    eq(prun('[span.a, span.b]'), [10, 20], 'the hand-placed span')
+})
+
 check('dropping the deleted runs leaves the text at the end of the span', () => {
     const r = run(`(() => {
         let a = new Doc('alice'); a.ins(0, 'hello')

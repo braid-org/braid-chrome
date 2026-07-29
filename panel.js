@@ -696,6 +696,11 @@ function toggle_time_travel() {
     // Forget where the line last was, so switching it on takes hold of the
     // span again rather than deciding nothing has moved.
     travelling_vi = null
+    // Switching the line off lets go of the span it was holding: that
+    // selection was the line's doing, and there is nothing left to keep it.
+    // Only this path clears it — a span placed by hand also leaves the box
+    // unchecked, and that one is the user's and stays.
+    if (!id_time_travel.checked) select_span(null)
     update_time_travel()
 }
 

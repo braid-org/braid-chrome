@@ -7,7 +7,6 @@
     "tabs",
     "storage",
     "scripting",
-    "background",
     "webRequest",
 
     // For adding headers to requests:
@@ -25,18 +24,24 @@
     "http://*/*",
     "file:///*"
   ],
+  // Firefox rejects non-square icons, and braid-b.png is 871x913, so these are
+  // it padded square and scaled down. Regenerate them from braid-b.png with:
+  //   for s in 16 32 48 128; do magick braid-b.png -background none \
+  //     -gravity center -extent 913x913 -resize ${s}x${s} braid-b-$s.png; done
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
-      "16": "braid-b.png",
-      "48": "braid-b.png",
-      "128": "braid-b.png"
+      "16": "braid-b-16.png",
+      "32": "braid-b-32.png",
+      "48": "braid-b-48.png",
+      "128": "braid-b-128.png"
     }
   },
   "icons": {
-    "16": "braid-b.png",
-    "48": "braid-b.png",
-    "128": "braid-b.png"
+    "16": "braid-b-16.png",
+    "32": "braid-b-32.png",
+    "48": "braid-b-48.png",
+    "128": "braid-b-128.png"
   },
   "web_accessible_resources": [
     {
@@ -56,22 +61,54 @@
       "matches": [
         "<all_urls>"
       ],
+      // Plain paths rather than "./" ones: both browsers document them this
+      // way, and Chrome is happy either way.
       "js": [
-        "./content-script.js",
-        "./dt.js",
-        "./dt-helpers.js",
-        "./myers-diff1.js",
-        "./braid-http-client.js",
-        "./apply-patch.js",
-        "./braid-text/cursor-highlights.js",
-        "./braid-text/cursor-sync.js"
+        "content-script.js",
+        "dt.js",
+        "dt-helpers.js",
+        "myers-diff1.js",
+        "braid-http-client.js",
+        "apply-patch.js",
+        "braid-text/cursor-highlights.js",
+        "braid-text/cursor-sync.js"
       ],
       // run_at can be document_start, document_end, or document_idle (default)
       "run_at": "document_start"
     }
   ],
+  // Chrome reads service_worker and ignores scripts; Firefox has no background
+  // service workers, so it reads scripts and runs the same file as an event
+  // page. Since Firefox 121 the extra service_worker key no longer stops it.
   "background": {
-    "service_worker": "service-worker.js"
+    "service_worker": "service-worker.js",
+    "scripts": ["service-worker.js"]
+  },
+
+  // Firefox won't compile the dt wasm on an extension page (the devtools panel
+  // loads dt.js) without being told wasm is expected. Chrome already allows it.
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+
+  // Firefox keys everything — settings, storage, AMO listing — off this id,
+  // and generates a throwaway one per install without it.
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "braid-chrome@braid.org",
+      // The extension itself only needs 121, where a background page stopped
+      // being suppressed by the service_worker key. 140 is what the data
+      // consent declaration below needs; drop this back to 121.0 to reach
+      // older Firefoxes, at the cost of two lint warnings on AMO.
+      "strict_min_version": "140.0",
+
+      // Nothing here leaves the browser: the extension talks to the server the
+      // page already came from, and tells no one else about it. AMO requires
+      // saying so explicitly, and "none" is how you say it.
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
+    }
   },
   // "commands": {
   //   "_execute_browser_action": {

@@ -126,6 +126,11 @@ function show_diff_view(diff_d, diff, colors, show_deletions, at) {
   let scroll = { vertical: from.scrollTop, horizontal: from.scrollLeft }
 
   if (!diff) {
+    // Nothing is up, so there is nothing to take down. Saying so anyway used
+    // to rewrite the textarea's display and scroll, and the page flickered
+    // and grew a scrollbar for a moment over a request to change nothing.
+    if (!showing) return
+
     diff_d.style.display = 'none'
     textarea.style.display = 'block'
     textarea.scrollTop = scroll.vertical
@@ -190,6 +195,10 @@ function send_dev_message(m) {
 }
 
 function on_bytes_received(s) {
+  // A heartbeat is a bare CRLF of its own, proving the pipe is alive rather
+  // than saying anything. Mid-blob those two bytes are the blob's.
+  if (dt_blob_left === 0 && s.length === 2 && s[0] === 13 && s[1] === 10) return
+
   var text = decode_binary_as_markers(s)
   if (text) record_raw(text)
 }
@@ -540,7 +549,7 @@ async function handle_subscribe() {
           >•</span>
           <textarea
               class="${uniquePrefix}_textarea"
-              style="width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box; background: transparent; color: inherit;"
+              style="display: block; width: 100%; height:100%; padding: 13px 8px; font-size: 13px; border: 0; box-sizing: border-box; background: transparent; color: inherit;"
               readonly
               disabled
           ></textarea>
@@ -605,6 +614,7 @@ async function handle_subscribe() {
       cache: 'no-store',
       subscribe: true,
       retry: true,
+      heartbeats: 22.5,
       onSubscriptionStatus: (status) => {
         set_subscription_online(status.online)
         if (on_subscription_status) on_subscription_status(status)
@@ -817,6 +827,14 @@ async function handle_subscribe() {
 
       // Convert sel back from last_text space to textarea space
       mapSelToNormalized(new_text, sel)
+
+      // Assigning .value scrolls a textarea back to where it thinks it should
+      // be and repaints it, even when the string handed to it is the one it
+      // already holds -- so a flush that changed nothing must not assign. A
+      // reconnect re-sends history we already have and lands here.
+      if (new_text === last_text && textarea.value === new_text
+          && textarea.selectionStart === sel[0] && textarea.selectionEnd === sel[1])
+        return
 
       textarea.value = last_text = new_text
       last_text_code_points = count_code_points(last_text)

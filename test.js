@@ -116,6 +116,8 @@ function make_window() {
         },
     }
     win.getSelection = () => ({ toString: () => '' })
+    // Only inline styles exist here, so that is all this can report
+    win.getComputedStyle = e => e.style
     win.window = win
     win.self = win
     win.globalThis = win
@@ -938,6 +940,68 @@ check('the panel says what it is asking for when it connects, not only when it c
 
     prun('merge_type_select.value = ""; version_request.value = ""')
     prun('backgroundConnection = __bc')
+})
+
+// --------------------------------------------------- heartbeats on the wire
+
+console.log('\nheartbeats keep out of the raw messages view')
+
+const wire = s => new Uint8Array([...s].map(c => c.charCodeAt(0)))
+
+check('a bare CRLF is a heartbeat, and says nothing worth recording', () => {
+    // Every 22.5s forever, so recording them buries the view in blank lines
+    crun('raw_messages = []; dt_blob_left = 0')
+    page.ctx.__hb = wire('\r\n')
+    crun('on_bytes_received(__hb)')
+    eq(crun('raw_messages.length'), 0, 'the heartbeat was recorded')
+})
+
+check('anything else is still recorded', () => {
+    crun('raw_messages = []; dt_blob_left = 0')
+    page.ctx.__up = wire('Version: "a-0"\r\nContent-Length: 2\r\n\r\nhi\r\n')
+    crun('on_bytes_received(__up)')
+    ok(crun('raw_messages.join("")').includes('Version: "a-0"'), 'the update went missing')
+})
+
+check('two such bytes inside a dt blob are the blob\'s, not a heartbeat', () => {
+    // Mistaking them for one would leave the blob's byte count two short, and
+    // every boundary after it wrong
+    crun('raw_messages = []; dt_blob_left = 10')
+    page.ctx.__mid = wire('\r\n')
+    crun('on_bytes_received(__mid)')
+    eq(crun('dt_blob_left'), 8, 'the blob lost track of two bytes')
+})
+
+// -------------------------------------------- taking the time-travel view down
+
+console.log('\ntaking the diff view down')
+
+check('being told to take down a diff that is not up leaves the page alone', () => {
+    // The panel says this whenever it disconnects, which an event page makes
+    // it do every 30 seconds. Rewriting the textarea's display flipped it from
+    // inline-block to block, and the page flickered and grew a scrollbar over
+    // a request to change nothing.
+    crun(`__diff_d = document.createElement('pre'); __diff_d.style.display = 'none'
+          textarea = document.createElement('textarea')
+          show_diff_view(__diff_d, null)`)
+    eq(crun('textarea.style.display'), '', 'the textarea display was rewritten')
+})
+
+check('being told to take down one that is up does take it down', () => {
+    crun(`__diff_d.style.display = 'block'; show_diff_view(__diff_d, null)`)
+    eq(crun('__diff_d.style.display'), 'none', 'the diff stayed up')
+    eq(crun('textarea.style.display'), 'block', 'the textarea stayed hidden')
+})
+
+check('the textarea is laid out as a block from the start', () => {
+    // Which is what keeps the line above from being a layout change. As an
+    // inline-block it sat on a baseline, and the space that reserves below it
+    // was enough to overflow the container it fills.
+    const src = fs.readFileSync(path.join(DIR, 'content-script.js'), 'utf8')
+    const tag = src.match(/<textarea\s+class="\$\{uniquePrefix\}_textarea"\s+style="([^"]*)"/)
+    ok(tag, 'could not find the editor textarea')
+    ok(/(^|;)\s*display:\s*block/.test(tag[1]),
+       `the editor textarea does not declare display:block: ${tag[1]}`)
 })
 
 // ------------------------------------------ which pages the extension takes

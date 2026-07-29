@@ -357,6 +357,10 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     if (deleteIcon) deleteIcon.style.display = 'flex'
   } else if (request.cmd == 'panel_closed') {
     if (deleteIcon) deleteIcon.style.display = 'none'
+    // Time-travel was the panel driving this page, and the panel has gone.
+    // Leaving the diff up would strand the page showing an old version of
+    // itself with nothing left that could take it off the screen.
+    on_show_diff(null)
   } else if (request.cmd == "show_diff") {
     on_show_diff(request.from_version, request.to_version, request.colors,
                  request.show_deletions, request.at)
@@ -623,7 +627,13 @@ async function handle_subscribe() {
     return
   }
 
-  if (headers['merge-type']) merge_type = headers['merge-type']
+  // Which merge-type we got is the response's to say. Asking for one is a
+  // request, and a server is free to answer with a different one, or with
+  // none, and still be serving Braid -- merge-types are a feature to
+  // negotiate, not a thing every server has. Reading our own request back as
+  // if it were the answer ran dt's machinery over versions that had never
+  // been dt's, and threw on the first update that arrived.
+  merge_type = headers['merge-type'] ?? null
 
   // application/http-history frames the subscription; it is not the repr.
   // When the response doesn't name a repr, fall back to the type we asked for
@@ -1958,3 +1968,13 @@ function make_html(html) {
 // has run, and then it has nothing to send. We are only running at all because
 // the headers already arrived, so asking now always finds them.
 chrome.runtime.sendMessage({ cmd: 'ready' })
+
+// Going back to a page can hand the same document back rather than making a
+// new one: no request goes out, no headers come in, and this script -- still
+// here from last time -- never runs again. So none of the above happens, and
+// devtools would go on showing the history of the page you just left. The
+// document still has its own, and says it again.
+window.addEventListener('pageshow', e => {
+  if (e.persisted)
+    send_dev_message({ action: "init", headers, versions, raw_messages, get_failed })
+})

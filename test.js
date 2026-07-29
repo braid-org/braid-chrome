@@ -51,6 +51,8 @@ function ok(cond, what) {
 function make_window() {
     const by_id = {}
     const told = []
+    const listening = {}
+    const said = []
     const tag_count = s => (String(s).match(/<[a-zA-Z]/g) || []).length
 
     function el(tag) {
@@ -90,7 +92,9 @@ function make_window() {
     const win = {
         document, console,
         requestAnimationFrame: f => f(),
-        addEventListener() {}, onload: null,
+        // Kept, so a test can raise one the way the browser would
+        addEventListener: (type, fn) => (listening[type] ??= []).push(fn),
+        onload: null,
         setTimeout, clearTimeout, setInterval, clearInterval, atob, btoa,
         TextEncoder, TextDecoder, performance,
         crypto: require('crypto').webcrypto,
@@ -106,7 +110,7 @@ function make_window() {
                 connect: () => ({ postMessage() {}, onMessage: { addListener() {} } }),
                 // Kept, so a test can deliver what the background would say
                 onMessage: { addListener: fn => told.push(fn) },
-                sendMessage() {},
+                sendMessage: m => said.push(m),
             },
             devtools: { inspectedWindow: { tabId: 1 } },
         },
@@ -127,7 +131,7 @@ function make_window() {
         'id_show_deletions', 'id_show_deletions_label'])
         win[id] = by_id[id] = el('div')
 
-    return { win, by_id, told, ctx: vm.createContext(win) }
+    return { win, by_id, told, listening, said, ctx: vm.createContext(win) }
 }
 
 function load(ctx, file) {
@@ -565,6 +569,36 @@ check('a span placed by hand outlives the line being redrawn', () => {
     eq(prun('[span.a, span.b]'), [10, 20], 'the hand-placed span')
 })
 
+// A page arriving: the panel is told its history from scratch. These leave it
+// holding an empty one, so each puts the long history back first.
+const a_page_loads = () => prun(`fill(2000); layout = null; layout_history()
+    render_history_window()
+    add_message({ action: 'init', versions: [], raw_messages: [], get_failed: '' })`)
+
+check('a new page is not shown the span selected on the last one', () => {
+    // The span names versions by their place in the history, and a reload or
+    // a new url replaces that history wholesale
+    prun(`fill(2000); layout = null; layout_history(); render_history_window()`)
+    prun('select_span(10, 20)')
+    a_page_loads()
+    eq(prun('span'), null, 'the span survived the page it was chosen on')
+})
+
+check('but the time-travel line is a setting, and stays on across one', () => {
+    prun(`fill(2000); layout = null; layout_history(); render_history_window()`)
+    panel.win.id_time_travel.checked = true
+    prun('travelling_vi = null; update_time_travel()')
+    ok(prun('span') !== null, 'the line should have placed a span to be cleared')
+
+    a_page_loads()
+    ok(panel.win.id_time_travel.checked, 'the line switched itself off')
+    panel.win.id_time_travel.checked = false
+    prun('update_time_travel()')
+})
+
+// Put the long history back for the tests that come after
+prun(`fill(2000); layout = null; layout_history(); render_history_window()`)
+
 check('dropping the deleted runs leaves the text at the end of the span', () => {
     const r = run(`(() => {
         let a = new Doc('alice'); a.ins(0, 'hello')
@@ -948,6 +982,26 @@ check('asking for something in the panel does take one over', () => {
 check('a Braid page loading with the panel open is connected the panel\'s way', () => {
     eq(deliver_load('https://x.test/5', braid_headers, panel_open).merge_type, 'simpleton',
        'the panel\'s merge-type')
+})
+
+check('a page handed back by the back button says its history over again', () => {
+    // Nothing else can say it: no request goes out, so the background hears
+    // nothing, and this script is the one that was already here
+    crun('versions = [{ method: "GET", version: ["a-0"] }]; headers = { subscribe: "?1" }')
+    page.said.length = 0
+    for (const fn of page.listening.pageshow ?? []) fn({ persisted: true })
+
+    const init = page.said.find(m => m.action === 'init')
+    ok(init, 'devtools was left showing the page you came from')
+    eq(init.versions, [{ method: 'GET', version: ['a-0'] }], 'the history it sent')
+})
+
+check('an ordinary reload is left to say it in the usual way', () => {
+    // persisted is false for a document that was really built again, and that
+    // one announces itself through the background as it always did
+    page.said.length = 0
+    for (const fn of page.listening.pageshow ?? []) fn({ persisted: false })
+    eq(page.said.filter(m => m.action === 'init').length, 0, 'said it twice')
 })
 
 // ------------------------------------------------- the background, on its own

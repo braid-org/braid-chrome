@@ -129,6 +129,14 @@ function add_message(message) {
         // document has to go with it: keeping it would merge two unrelated
         // histories into one graph, and would leave the incoming history with
         // nothing new to report.
+        //
+        // The span named versions of that same replaced history, so it means
+        // nothing against the one arriving and goes with it. Saying it came
+        // from the line leaves the time-travel box alone: that one is a
+        // setting rather than a selection, and takes hold of the new history
+        // on its own.
+        if (span) select_span(null, null, true)
+        travelling_vi = null
         reset_dt_doc()
         versions = message.versions
         raw_messages = message.raw_messages

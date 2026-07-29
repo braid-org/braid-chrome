@@ -63,10 +63,10 @@ function connect() {
 
     backgroundConnection.onDisconnect.addListener(() => setTimeout(connect, 500));
 
-    id_raw_messages.onchange = () => { update_time_travel_enabled(); update() }
+    id_raw_messages.onchange = () => { update_history_controls(); update() }
     id_time_travel.onchange = toggle_time_travel
     id_show_deletions.onchange = () => show_span_diff()
-    update_time_travel_enabled()
+    update_history_controls()
 
     subscribe_request.onchange = () => {
         if (subscribe_request.checked) {
@@ -708,13 +708,19 @@ function toggle_time_travel() {
     update_time_travel()
 }
 
-function update_time_travel_enabled() {
-    // Raw messages replace the history view altogether, so there is nothing
-    // to scroll through and the checkbox has no meaning.
+// Raw messages replace the history view altogether, so there is nothing left
+// to scroll through and nothing to have selected a span of. Any span that was
+// showing goes with it, since it could no longer be seen or adjusted, and the
+// controls that act on one say so by going grey.
+function update_history_controls() {
     let off = id_raw_messages.checked
-    id_time_travel.disabled = off
-    id_time_travel_label.style.opacity = off ? 0.4 : 1
+    if (off && span) select_span(null)
     if (off && id_time_travel.checked) id_time_travel.checked = false
+    for (let [box, label] of [[id_time_travel, id_time_travel_label],
+                              [id_show_deletions, id_show_deletions_label]]) {
+        box.disabled = off
+        label.style.opacity = off ? 0.4 : 1
+    }
 }
 
 // The dashed line sits across the middle of the view, and the span follows it:
@@ -724,7 +730,7 @@ function update_time_travel_enabled() {
 function update_time_travel() {
     let line = document.getElementById('history_line')
     if (!line) return
-    update_time_travel_enabled()
+    update_history_controls()
     if (!id_time_travel.checked || id_time_travel.disabled || !layout) {
         line.style.display = 'none'
         travelling_vi = null

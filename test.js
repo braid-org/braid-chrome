@@ -477,7 +477,7 @@ check('the line stays hidden until it is switched on', () => {
 
 check('switching it on puts the line across the middle of the view', () => {
     panel.win.id_time_travel.checked = true
-    prun('update_time_travel_enabled()')
+    prun('update_history_controls()')
     panel.win.id_messages.scrollTop = 4000
     prun('update_time_travel()')
     eq(panel.by_id['history_line'].style.display, 'block', 'line display')
@@ -511,6 +511,21 @@ check('raw messages turns time travel off', () => {
     eq(prun('travelling_vi'), null, 'the line is still following a version')
     panel.win.id_raw_messages.checked = false
     panel.win.id_time_travel.checked = false
+})
+
+check('raw messages lets go of the span and greys what acts on one', () => {
+    prun('select_span(10, 20)')
+    panel.win.id_raw_messages.checked = true
+    prun('update_history_controls()')
+    eq(prun('span'), null, 'a span nobody can see or adjust')
+    for (const box of ['id_time_travel', 'id_show_deletions'])
+        ok(panel.win[box].disabled, `${box} is still live`)
+    eq(panel.win.id_show_deletions_label.style.opacity, 0.4, 'the label still reads as live')
+
+    panel.win.id_raw_messages.checked = false
+    prun('update_history_controls()')
+    for (const box of ['id_time_travel', 'id_show_deletions'])
+        ok(!panel.win[box].disabled, `${box} stayed grey`)
 })
 
 check('placing a span by hand takes the job off the line', () => {

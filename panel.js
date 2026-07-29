@@ -43,10 +43,27 @@ function connect() {
     backgroundConnection = chrome.runtime.connect({ name: "braid-devtools-panel" })
     backgroundConnection.onMessage.addListener(add_message)
 
-    backgroundConnection?.postMessage({ cmd: 'init', tab_id: chrome.devtools.inspectedWindow.tabId })
+    // Opening the panel says what it would ask for, without asking for it.
+    // Connecting a page that never advertised Braid costs it a second GET,
+    // which can rotate a csrf token or spend a single-use url, so the page
+    // sniffs for Braid and only an explicit ask overrules that.
+    let asked_for_it = false
+
+    // Everything the page needs to ask for what the panel is showing.
+    function settings(cmd) {
+        return { cmd, asked_for: asked_for_it, content_type: content_type_select.value, merge_type: merge_type_select.value, subscribe: subscribe_request.checked, encoding_dt: encoding_request.checked, ...(version_request.value ? { version: version_request.value } : {}), ...(parents_request.value ? { parents: parents_request.value } : {}), edit_source: edit_source.checked }
+    }
+
+    // Said on every connect, not only on every change. The background holds a
+    // copy to hand each page as it loads, but it is an event page and forgets
+    // whenever it sleeps -- and the reconnect that follows is what brings the
+    // settings back. Until this, getting them back meant toggling a control
+    // off and on again.
+    backgroundConnection?.postMessage({ ...settings('init'), tab_id: chrome.devtools.inspectedWindow.tabId })
 
     function rerequest() {
-        backgroundConnection?.postMessage({ cmd: "rerequest", content_type: content_type_select.value, merge_type: merge_type_select.value, subscribe: subscribe_request.checked, encoding_dt: encoding_request.checked, ...(version_request.value ? { version: version_request.value } : {}), ...(parents_request.value ? { parents: parents_request.value } : {}), edit_source: edit_source.checked });
+        asked_for_it = true
+        backgroundConnection?.postMessage(settings("rerequest"));
 
         last_version = version_request.value
         last_parents = parents_request.value
@@ -92,8 +109,13 @@ function connect() {
     }
 
     edit_source.oninput = () => {
-        if (edit_source.checked) backgroundConnection?.postMessage({ cmd: "edit_source" })
-        else rerequest()
+        // Showing the source swaps the view in place rather than reconnecting,
+        // so it keeps its own cmd -- but it carries the settings like the rest,
+        // so the background has them for the next page either way.
+        if (edit_source.checked) {
+            asked_for_it = true
+            backgroundConnection?.postMessage(settings("edit_source"))
+        } else rerequest()
     }
 
 }
@@ -191,6 +213,18 @@ function raw_update() {
 
     window.error_d_label.style.display = get_failed ? 'inline' : 'none'
     window.error_d.textContent = get_failed
+
+    // A version and parents follow you to the next url, because resources
+    // that move in step name their versions alike and stepping through them
+    // together is the point. A resource that has never heard of the version
+    // says so, and the ask goes red and stays put, rather than being cleared
+    // out from under you or quietly dropped.
+    var refused = headers[':status'] >= 400
+    for (let box of [version_request, parents_request]) {
+        box.style.color = refused && box.value ? '#c00' : ''
+        box.title = refused && box.value
+            ? `this resource answered ${headers[':status']}` : ''
+    }
 
     edit_source_d.style.display = (headers['repr-type'] ?? headers['content-type'])?.startsWith('text/html') ? 'flex' : 'none'
 

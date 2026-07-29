@@ -46,6 +46,15 @@ chrome.tabs.onUpdated.addListener(function callback(tabid, info, tab) {
   if (info.status === 'complete') send_loaded(tabid, tab.url)
 })
 
+// Nothing we remember about a tab outlives it
+chrome.tabs.onRemoved.addListener(tabid => {
+  delete tab_to_dev[tabid]
+  delete tab_to_last_dev_message[tabid]
+  delete latest_headers_for_tab[tabid]
+  delete latest_request_headers_for_tab[tabid]
+  delete waiting_for_headers[tabid]
+})
+
 chrome.webRequest.onSendHeaders.addListener(
   details => {
     console.log('%cRequest headers being sent!', 'background: #8f8', details)
@@ -85,17 +94,27 @@ chrome.runtime.onConnect.addListener((port) => {
         tab_to_dev[tab_id] = port
         chrome.tabs.sendMessage(tab_id, { cmd: 'panel_opened' })
       }
-      if (message.cmd == 'rerequest') tab_to_last_dev_message[tab_id] = message
-      if (message.cmd == 'edit_source') {
-        if (!tab_to_last_dev_message[tab_id]) tab_to_last_dev_message[tab_id] = {}
-        tab_to_last_dev_message[tab_id].edit_source = true
-      }
+      // Every message that carries the panel's settings replaces what we hold
+      // for the tab -- 'init' as much as the ones that change something -- so
+      // opening the panel, or reconnecting to a background that slept and lost
+      // them, puts them back for the next page to pick up. They say for
+      // themselves whether the user asked for anything; the page needs to know,
+      // because an open panel alone must not connect a non-Braid page.
+      if (message.cmd == 'init' || message.cmd == 'rerequest'
+          || message.cmd == 'edit_source')
+        tab_to_last_dev_message[tab_id] = message
 
       chrome.tabs.sendMessage(tab_id, message)
     });
     port.onDisconnect.addListener(() => {
       delete tab_to_dev[tab_id]
-      chrome.tabs.sendMessage(tab_id, { cmd: 'panel_closed' })
+      // Settings last as long as the panel that chose them. The page showing
+      // right now keeps whatever it was given -- we say nothing to it -- but
+      // the next load in this tab starts from the page's own headers again,
+      // rather than being steered by a panel that is no longer there.
+      delete tab_to_last_dev_message[tab_id]
+      chrome.tabs.sendMessage(tab_id, { cmd: 'panel_closed' },
+                              () => chrome.runtime.lastError)
     })
   }
 })

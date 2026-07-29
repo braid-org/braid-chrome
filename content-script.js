@@ -310,12 +310,18 @@ function record_response(response) {
   // expose Symbol.iterator on the iterator Headers hands back, so for-of dies
   // with "not iterable" there while working fine in Chrome.
   response.headers.forEach((value, name) => headers[name.toLowerCase()] = value)
-  send_dev_message({ action: "new_headers", headers })
 
   var status_text = {200: 'OK', 209: 'Multiresponse'}[response.status] ?? ''
   record_raw(`HTTP/1.1 ${response.status} ${status_text}\r\n`
              + Object.entries(headers).map(([k, v]) => `${k}: ${v}\r\n`).join('')
              + '\r\n')
+
+  // The status travels under a name no real header can take -- the same one
+  // the navigation's headers arrive under -- so the panel can tell a version
+  // this resource refused from one it served. Added after the status line
+  // above is built, which shows only what was really on the wire.
+  headers[':status'] = response.status
+  send_dev_message({ action: "new_headers", headers })
 }
 
 function on_bytes_going_out(url, params) {
@@ -398,9 +404,10 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
       // Vary headers, but advertise Subscribe in their CORS allow-list
       || /\bsubscribe\b/i.test(headers['access-control-allow-headers'] ?? '')
 
-    // A dev_message means devtools explicitly asked to connect this tab,
-    // which overrides the sniff
-    if (!braidly && !request.dev_message) return
+    // Devtools can overrule the sniff, but only by asking: an open panel
+    // sends its settings for every page, and having it open is not a request
+    // to connect one that never advertised Braid.
+    if (!braidly && !request.dev_message?.asked_for) return
 
     // Everything past here reads and replaces document.body, and we may have
     // been told about this page before the parser has made one — we ask for

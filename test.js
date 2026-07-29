@@ -50,6 +50,7 @@ function ok(cond, what) {
 // cannot check what the page looks like, only what it builds.
 function make_window() {
     const by_id = {}
+    const told = []
     const tag_count = s => (String(s).match(/<[a-zA-Z]/g) || []).length
 
     function el(tag) {
@@ -103,7 +104,8 @@ function make_window() {
             runtime: {
                 getURL: f => path.join(DIR, f),
                 connect: () => ({ postMessage() {}, onMessage: { addListener() {} } }),
-                onMessage: { addListener() {} },
+                // Kept, so a test can deliver what the background would say
+                onMessage: { addListener: fn => told.push(fn) },
                 sendMessage() {},
             },
             devtools: { inspectedWindow: { tabId: 1 } },
@@ -125,7 +127,7 @@ function make_window() {
         'id_show_deletions', 'id_show_deletions_label'])
         win[id] = by_id[id] = el('div')
 
-    return { win, by_id, ctx: vm.createContext(win) }
+    return { win, by_id, told, ctx: vm.createContext(win) }
 }
 
 function load(ctx, file) {
@@ -875,6 +877,206 @@ check('dragging within one version says nothing to the page', () => {
     sent.length = 0
     prun('select_span(40, 50); select_span(40, 50)')
     eq(sent.filter(m => m.cmd === 'show_diff').length, 0, 'redundant diffs sent')
+})
+
+check('the panel says what it is asking for when it connects, not only when it changes', () => {
+    const said = []
+    panel.win.chrome.runtime.connect = () => ({
+        postMessage: m => said.push(m),
+        onMessage: { addListener() {} },
+        onDisconnect: { addListener() {} },
+    })
+    prun('merge_type_select.value = "simpleton"; version_request.value = "\\"a\\"-3"')
+    prun('connect()')
+
+    const init = said.find(m => m.cmd === 'init')
+    ok(init, 'no init message was sent')
+    eq(init.merge_type, 'simpleton', 'merge-type carried by init')
+    eq(init.version, '"a"-3', 'version carried by init')
+
+    // Opening the panel says what it would ask for, without asking for it --
+    // connecting a page that never advertised Braid can rotate a csrf token
+    // or spend a single-use url, so it takes an actual ask
+    eq(init.asked_for, false, 'opening the panel counted as asking')
+    said.length = 0
+    prun('content_type_select.onchange()')
+    eq(said.pop().asked_for, true, 'changing a control did not count as asking')
+
+    prun('merge_type_select.value = ""; version_request.value = ""')
+    prun('backgroundConnection = __bc')
+})
+
+// ------------------------------------------ which pages the extension takes
+
+console.log('\nthe extension takes over the pages it should')
+
+// Nothing here should reach the network: connect() is the moment the page
+// would be fetched a second time, so standing in for it is exactly the
+// question being asked.
+crun('connect = p => { globalThis.__connected = p }; setupDragAndDrop = () => {}')
+
+function deliver_load(url, headers, dev_message) {
+    page.win.__connected = undefined
+    for (const listener of page.told)
+        listener({ cmd: 'loaded', url, headers, request_headers: {}, dev_message }, {}, () => { })
+    return page.win.__connected
+}
+
+const braid_headers = { vary: 'subscribe', 'content-type': 'text/plain' }
+const plain_headers = { 'content-type': 'text/html' }
+const panel_open = { asked_for: false, merge_type: 'simpleton' }
+const panel_asked = { asked_for: true, merge_type: 'simpleton' }
+
+check('a page advertising Braid is taken over', () => {
+    ok(deliver_load('https://x.test/1', braid_headers, undefined), 'left alone')
+})
+
+check('an ordinary website is left alone', () => {
+    eq(deliver_load('https://x.test/2', plain_headers, undefined), undefined, 'taken over')
+})
+
+check('having the panel open is not on its own a reason to take one over', () => {
+    // The panel says what it is asking for on every page, so this arrives at
+    // every ordinary website you visit while it is open
+    eq(deliver_load('https://x.test/3', plain_headers, panel_open), undefined, 'taken over')
+})
+
+check('asking for something in the panel does take one over', () => {
+    ok(deliver_load('https://x.test/4', plain_headers, panel_asked), 'left alone')
+})
+
+check('a Braid page loading with the panel open is connected the panel\'s way', () => {
+    eq(deliver_load('https://x.test/5', braid_headers, panel_open).merge_type, 'simpleton',
+       'the panel\'s merge-type')
+})
+
+// ------------------------------------------------- the background, on its own
+
+console.log('\nthe background hands each page the settings that apply to it')
+
+// Enough of the extension APIs for service-worker.js to register itself, and
+// a way to fire each event the way the browser would.
+function make_worker() {
+    const sent = []
+    const hooks = {}
+    const hook = name => ({ addListener: fn => (hooks[name] ??= []).push(fn) })
+    const win = {
+        console: { log() { } },
+        chrome: {
+            tabs: {
+                onUpdated: hook('updated'), onRemoved: hook('removed'),
+                sendMessage: (tabid, message, cb) => { sent.push({ tabid, message }); cb?.() },
+            },
+            webRequest: {
+                onSendHeaders: hook('sending'), onHeadersReceived: hook('received'),
+            },
+            runtime: { onConnect: hook('connect'), onMessage: hook('message'), lastError: null },
+        },
+    }
+    win.window = win, win.self = win, win.globalThis = win
+    const w = { win, sent, ctx: vm.createContext(win) }
+    w.fire = (name, ...args) => (hooks[name] ?? []).forEach(fn => fn(...args))
+    load(w.ctx, 'service-worker.js')
+    return w
+}
+
+// Opening the panel on a tab, announcing what its controls currently say
+function open_panel(w, tabid, settings) {
+    let deliver = null, disconnect = null
+    const port = {
+        name: 'braid-devtools-panel', postMessage() { },
+        onMessage: { addListener: fn => (deliver = fn) },
+        onDisconnect: { addListener: fn => (disconnect = fn) },
+    }
+    w.fire('connect', port)
+    deliver({ cmd: 'init', tab_id: tabid, ...settings })
+    return { say: deliver, close: () => disconnect() }
+}
+
+// A navigation, in the order the browser really reports one: the request goes
+// out, the content script is parsed and runs and announces itself, and only
+// then does webRequest get around to the response headers.
+function navigate(w, tabid, url) {
+    w.fire('sending', { tabId: tabid, requestHeaders: [{ name: 'Accept', value: 'text/plain' }] })
+    w.fire('message', { cmd: 'ready' }, { tab: { id: tabid, url } })
+    w.fire('received', { tabId: tabid, statusCode: 200, responseHeaders: [] })
+}
+
+const loaded_msgs = w => w.sent.filter(s => s.message.cmd === 'loaded')
+
+check('a page that asks before the headers arrive is answered once, afterwards', () => {
+    const w = make_worker()
+    navigate(w, 7, 'https://x.test/a')
+    const loads = loaded_msgs(w)
+    eq(loads.length, 1, 'loaded messages')
+    ok(loads[0].message.headers, 'answered without the headers it was waiting for')
+})
+
+check('a page loading while the panel is open is given the panel\'s settings', () => {
+    const w = make_worker()
+    open_panel(w, 7, { merge_type: 'simpleton', subscribe: true })
+    navigate(w, 7, 'https://x.test/a')
+    eq(loaded_msgs(w).pop().message.dev_message.merge_type, 'simpleton', 'merge-type')
+})
+
+check('so is the next url, and the version pinned in the panel goes with it', () => {
+    // Resources that move in step name their versions alike, so carrying the
+    // pin across is the point; a resource that has never heard of it says so.
+    const w = make_worker()
+    open_panel(w, 7, { merge_type: 'dt', version: '"a"-3' })
+    navigate(w, 7, 'https://x.test/a')
+    navigate(w, 7, 'https://x.test/b')
+    const last = loaded_msgs(w).pop().message
+    eq(last.url, 'https://x.test/b', 'the url answered')
+    eq(last.dev_message.version, '"a"-3', 'the pinned version')
+})
+
+check('closing the panel stops it steering the loads that come after', () => {
+    const w = make_worker()
+    const panel_1 = open_panel(w, 7, {})
+    panel_1.say({ cmd: 'rerequest', merge_type: 'simpleton' })
+    navigate(w, 7, 'https://x.test/a')
+    eq(loaded_msgs(w).pop().message.dev_message.merge_type, 'simpleton', 'while it was open')
+
+    panel_1.close()
+    navigate(w, 7, 'https://x.test/a')
+    eq(loaded_msgs(w).pop().message.dev_message, undefined, 'settings outlived the panel')
+})
+
+check('a panel reconnecting after the background slept brings its settings back', () => {
+    // The background is an event page: it wakes with nothing, and this is the
+    // only way the settings return. Before, you had to toggle a control.
+    const w = make_worker()
+    open_panel(w, 7, { merge_type: 'simpleton' })
+    const woken = make_worker()          // a fresh background, remembering nothing
+    open_panel(woken, 7, { merge_type: 'simpleton' })
+    navigate(woken, 7, 'https://x.test/a')
+    eq(loaded_msgs(woken).pop().message.dev_message.merge_type, 'simpleton', 'merge-type')
+})
+
+check('one tab\'s panel does not steer another tab', () => {
+    const w = make_worker()
+    open_panel(w, 7, { merge_type: 'simpleton' })
+    navigate(w, 9, 'https://x.test/a')
+    eq(loaded_msgs(w).pop().message.dev_message, undefined, 'leaked across tabs')
+})
+
+check('nothing remembered about a tab outlives it', () => {
+    const w = make_worker()
+    open_panel(w, 7, { merge_type: 'simpleton' })
+    navigate(w, 7, 'https://x.test/a')
+    w.fire('removed', 7, {})
+    for (const map of ['tab_to_dev', 'tab_to_last_dev_message', 'latest_headers_for_tab',
+                       'latest_request_headers_for_tab', 'waiting_for_headers'])
+        eq(vm.runInContext(`Object.keys(${map})`, w.ctx), [], `${map} still holds the tab`)
+})
+
+check('headers from the page being left do not answer for the page arriving', () => {
+    // Serving them is what made a second reload look like it had worked
+    const w = make_worker()
+    navigate(w, 7, 'https://x.test/a')
+    w.fire('sending', { tabId: 7, requestHeaders: [] })
+    eq(vm.runInContext('latest_headers_for_tab[7]', w.ctx), undefined, 'stale headers kept')
 })
 
 // ----------------------------------------------------------------- summary

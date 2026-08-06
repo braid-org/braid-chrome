@@ -111,6 +111,9 @@ function author_tint(colors, agent) {
            : 'rgba(140, 140, 140, 0.25)'
 }
 
+// What the diff view is currently showing, so being told again is cheap
+var showing_diff = null
+
 // Show what a span of history did, in place of the editor, or put the editor
 // back when there is nothing to show. Edits are highlighted in their author's
 // colour, the same one that author has in the history graph, so the text reads
@@ -135,8 +138,17 @@ function show_diff_view(diff_d, diff, colors, show_deletions, at) {
     textarea.style.display = 'block'
     textarea.scrollTop = scroll.vertical
     textarea.scrollLeft = scroll.horizontal
+    showing_diff = null
     return
   }
+
+  // The same diff can arrive over and over -- the panel says it again every
+  // time it reconnects, and a span that has not moved still describes itself.
+  // Rebuilding all of this to show what is already on screen is what the
+  // flicker was.
+  var same = JSON.stringify([diff, colors, show_deletions])
+  if (showing && same === showing_diff) return reveal_offset(diff_d, at)
+  showing_diff = same
 
   diff_d.style.display = 'block'
   textarea.style.display = 'none'
@@ -481,7 +493,8 @@ function connect(params) {
   raw_messages = []
   dt_blob_left = 0
   get_failed = ''
-  send_dev_message({ action: "init", versions, raw_messages, get_failed })
+  // fresh: a new sync, not this one describing itself to a panel that asked
+  send_dev_message({ action: "init", fresh: true, versions, raw_messages, get_failed })
 
   if (version || parents) handle_specific_version()
   else if (subscribe) handle_subscribe()

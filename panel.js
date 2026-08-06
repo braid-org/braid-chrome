@@ -125,19 +125,22 @@ function add_message(message) {
     //   console.log("Received message in devtools:", message);
 
     if (message.action == 'init') {
-        // A new sync replaces the history rather than adding to it. The old
-        // document has to go with it: keeping it would merge two unrelated
-        // histories into one graph, and would leave the incoming history with
-        // nothing new to report.
-        //
-        // The span named versions of that same replaced history, so it means
-        // nothing against the one arriving and goes with it. Saying it came
-        // from the line leaves the time-travel box alone: that one is a
-        // setting rather than a selection, and takes hold of the new history
-        // on its own.
-        if (span) select_span(null, null, true)
-        travelling_vi = null
-        reset_dt_doc()
+        // Only a new sync throws the old history away. The page also says all
+        // this when a panel asks it to, which every reconnect does, and that
+        // is the same history described again rather than a new one -- taking
+        // it for a page load rebuilt the view and flashed the page every time
+        // the port came back.
+        if (message.fresh) {
+            // Keeping the old document would merge two unrelated histories
+            // into one graph, and leave the incoming one nothing to report.
+            reset_dt_doc()
+
+            // The span named versions of the history being replaced. Saying it
+            // came from the line leaves the time-travel box alone: that is a
+            // setting rather than a selection, and takes hold on its own.
+            if (span) select_span(null, null, true)
+            travelling_vi = null
+        }
         versions = message.versions
         raw_messages = message.raw_messages
         if (message.headers) headers = message.headers

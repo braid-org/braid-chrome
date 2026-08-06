@@ -68,6 +68,7 @@ function make_window() {
                     by_id[m[1]] = by_id[m[1]] || el('div')
             },
             append(...c) { this.children.push(...c) },
+            appendChild(c) { this.children.push(c); return c },
             remove() {},
             closest: () => null,
             getBoundingClientRect: () => ({ x: 0, y: 0, top: 0, left: 0,
@@ -571,11 +572,16 @@ check('a span placed by hand outlives the line being redrawn', () => {
     eq(prun('[span.a, span.b]'), [10, 20], 'the hand-placed span')
 })
 
-// A page arriving: the panel is told its history from scratch. These leave it
+// A page arriving: the panel is told a history from scratch. These leave it
 // holding an empty one, so each puts the long history back first.
 const a_page_loads = () => prun(`fill(2000); layout = null; layout_history()
     render_history_window()
-    add_message({ action: 'init', versions: [], raw_messages: [], get_failed: '' })`)
+    add_message({ action: 'init', fresh: true, versions: [], raw_messages: [], get_failed: '' })`)
+
+// The same page describing itself again, which is what a panel reconnecting
+// asks it to do. Same words, no `fresh`.
+const the_page_says_it_again = () => prun(`add_message({ action: 'init',
+    versions: __vs.slice(0, 2000), raw_messages: [], get_failed: '' })`)
 
 check('a new page is not shown the span selected on the last one', () => {
     // The span names versions by their place in the history, and a reload or
@@ -584,6 +590,16 @@ check('a new page is not shown the span selected on the last one', () => {
     prun('select_span(10, 20)')
     a_page_loads()
     eq(prun('span'), null, 'the span survived the page it was chosen on')
+})
+
+check('but the panel reconnecting is not a new page, and keeps it', () => {
+    // A devtools port comes and goes on its own schedule. Treating each return
+    // as a page load dropped the span and drew it again, which the page saw as
+    // a flicker every time -- roughly every thirty seconds, for days.
+    prun(`fill(2000); layout = null; layout_history(); render_history_window()`)
+    prun('select_span(10, 20)')
+    the_page_says_it_again()
+    eq(prun('[span.a, span.b]'), [10, 20], 'the span was dropped')
 })
 
 check('but the time-travel line is a setting, and stays on across one', () => {
@@ -985,6 +1001,35 @@ check('being told to take down a diff that is not up leaves the page alone', () 
           textarea = document.createElement('textarea')
           show_diff_view(__diff_d, null)`)
     eq(crun('textarea.style.display'), '', 'the textarea display was rewritten')
+})
+
+check('being told to show the same diff again rebuilds nothing', () => {
+    // Every one of these rebuilt the whole view, and the page flashed. The
+    // panel re-sends whenever its port comes back, and a span that has not
+    // moved still describes itself.
+    crun(`__diff_d = document.createElement('pre'); __diff_d.style.display = 'none'
+          textarea = document.createElement('textarea')
+          showing_diff = null
+          __diff = [[0, 'kept ', null], [1, 'added', 'alice']]
+          show_diff_view(__diff_d, __diff, {}, false)`)
+    const built = crun('__diff_d.children.length')
+    ok(built > 0, 'the first showing built nothing')
+
+    crun(`__diff_d.children.length = 0
+          show_diff_view(__diff_d, __diff, {}, false)`)
+    eq(crun('__diff_d.children.length'), 0, 'it was rebuilt for no reason')
+})
+
+check('but a diff that has actually changed is drawn again', () => {
+    crun(`__diff_d.children.length = 0
+          show_diff_view(__diff_d, [[0, 'kept ', null], [1, 'different', 'bob']], {}, false)`)
+    ok(crun('__diff_d.children.length') > 0, 'the new diff was never drawn')
+})
+
+check('and so is the same diff with the deletions turned on', () => {
+    crun(`__diff_d.children.length = 0
+          show_diff_view(__diff_d, [[0, 'kept ', null], [1, 'different', 'bob']], {}, true)`)
+    ok(crun('__diff_d.children.length') > 0, 'toggling deletions showed nothing new')
 })
 
 check('being told to take down one that is up does take it down', () => {

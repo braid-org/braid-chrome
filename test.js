@@ -1003,33 +1003,34 @@ check('being told to take down a diff that is not up leaves the page alone', () 
     eq(crun('textarea.style.display'), '', 'the textarea display was rewritten')
 })
 
-check('being told to show the same diff again rebuilds nothing', () => {
-    // Every one of these rebuilt the whole view, and the page flashed. The
-    // panel re-sends whenever its port comes back, and a span that has not
-    // moved still describes itself.
+check('a span already showing is recognised from the ask alone', () => {
+    // The panel asks again every time its port comes back. Working the answer
+    // out before noticing costs ~9ms on a 144k document, and this is on the
+    // path a time-travel scroll takes every frame.
+    crun('showing_diff = null')
+    eq(crun(`already_showing(['a-1'], ['a-5'], {}, false)`), false, 'the first ask')
+    eq(crun(`already_showing(['a-1'], ['a-5'], {}, false)`), true, 'the very same ask')
+})
+
+check('a different span is not', () => {
+    eq(crun(`already_showing(['a-1'], ['a-9'], {}, false)`), false, 'a new span')
+})
+
+check('nor the same span with the deletions turned on', () => {
+    crun(`showing_diff = null; already_showing(['a-1'], ['a-5'], {}, false)`)
+    eq(crun(`already_showing(['a-1'], ['a-5'], {}, true)`), false, 'deletions toggled')
+})
+
+check('nor the same span recoloured under it', () => {
+    crun(`showing_diff = null; already_showing(['a-1'], ['a-5'], {a: 'red'}, false)`)
+    eq(crun(`already_showing(['a-1'], ['a-5'], {a: 'blue'}, false)`), false, 'recoloured')
+})
+
+check('a diff it has not seen is still drawn', () => {
     crun(`__diff_d = document.createElement('pre'); __diff_d.style.display = 'none'
           textarea = document.createElement('textarea')
-          showing_diff = null
-          __diff = [[0, 'kept ', null], [1, 'added', 'alice']]
-          show_diff_view(__diff_d, __diff, {}, false)`)
-    const built = crun('__diff_d.children.length')
-    ok(built > 0, 'the first showing built nothing')
-
-    crun(`__diff_d.children.length = 0
-          show_diff_view(__diff_d, __diff, {}, false)`)
-    eq(crun('__diff_d.children.length'), 0, 'it was rebuilt for no reason')
-})
-
-check('but a diff that has actually changed is drawn again', () => {
-    crun(`__diff_d.children.length = 0
-          show_diff_view(__diff_d, [[0, 'kept ', null], [1, 'different', 'bob']], {}, false)`)
-    ok(crun('__diff_d.children.length') > 0, 'the new diff was never drawn')
-})
-
-check('and so is the same diff with the deletions turned on', () => {
-    crun(`__diff_d.children.length = 0
-          show_diff_view(__diff_d, [[0, 'kept ', null], [1, 'different', 'bob']], {}, true)`)
-    ok(crun('__diff_d.children.length') > 0, 'toggling deletions showed nothing new')
+          show_diff_view(__diff_d, [[0, 'kept ', null], [1, 'added', 'alice']], {}, false)`)
+    ok(crun('__diff_d.children.length') > 0, 'the diff was never drawn')
 })
 
 check('being told to take down one that is up does take it down', () => {

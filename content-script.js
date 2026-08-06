@@ -111,8 +111,16 @@ function author_tint(colors, agent) {
            : 'rgba(140, 140, 140, 0.25)'
 }
 
-// What the diff view is currently showing, so being told again is cheap
+// What the diff view is currently showing. Being asked for it again -- which
+// the panel does whenever it reconnects -- then costs nothing, where working
+// out the answer before noticing takes about 9ms on a 144k document.
 var showing_diff = null
+function already_showing(from_version, to_version, colors, show_deletions) {
+  var asked = JSON.stringify([from_version, to_version, colors, show_deletions])
+  if (asked === showing_diff) return true
+  showing_diff = asked
+  return false
+}
 
 // Show what a span of history did, in place of the editor, or put the editor
 // back when there is nothing to show. Edits are highlighted in their author's
@@ -141,14 +149,6 @@ function show_diff_view(diff_d, diff, colors, show_deletions, at) {
     showing_diff = null
     return
   }
-
-  // The same diff can arrive over and over -- the panel says it again every
-  // time it reconnects, and a span that has not moved still describes itself.
-  // Rebuilding all of this to show what is already on screen is what the
-  // flicker was.
-  var same = JSON.stringify([diff, colors, show_deletions])
-  if (showing && same === showing_diff) return reveal_offset(diff_d, at)
-  showing_diff = same
 
   diff_d.style.display = 'block'
   textarea.style.display = 'none'
@@ -576,9 +576,11 @@ async function handle_subscribe() {
   // straight line, which is all of them but dt's; dt replaces this below with
   // something that asks the document itself.
   on_show_diff = (from_version, to_version, colors, show_deletions, at) =>
-    show_diff_view(diff_d,
-      from_version && replay_diff(versions, from_version, to_version),
-      colors, show_deletions, at)
+    from_version && already_showing(from_version, to_version, colors, show_deletions)
+      ? reveal_offset(diff_d, at)
+      : show_diff_view(diff_d,
+          from_version && replay_diff(versions, from_version, to_version),
+          colors, show_deletions, at)
   // show_editor() replaces the original page with our editor.  We defer
   // calling it until the first subscription update arrives, so that the
   // original page stays visible rather than flashing blank while we wait.
@@ -690,9 +692,11 @@ async function handle_subscribe() {
     // while a subscription is being replaced, and there is nothing to show
     // until its replacement has some history in it.
     on_show_diff = (from_version, to_version, colors, show_deletions, at) =>
-      show_diff_view(diff_d,
-        from_version && doc && dt_diff_from(doc, from_version, to_version),
-        colors, show_deletions, at)
+      from_version && already_showing(from_version, to_version, colors, show_deletions)
+        ? reveal_offset(diff_d, at)
+        : show_diff_view(diff_d,
+            from_version && doc && dt_diff_from(doc, from_version, to_version),
+            colors, show_deletions, at)
 
     textarea.addEventListener("input", async () => {
       let commonStart = 0;
